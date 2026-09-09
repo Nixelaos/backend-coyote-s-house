@@ -1,7 +1,8 @@
 # Plan — Conectar el backend de Coyote's House a Neon
 
-Documento de traspaso. Los pasos 1 a 7 de la instalación de Neon **ya se ejecutaron**
-(2026-09-09). Lo que queda es la migración real del almacenamiento de JSON a Postgres.
+Documento de traspaso. La instalación de Neon y **la migración completa de JSON a Postgres
+ya están hechas y verificadas** (2026-09-09), sobre la rama `dev`. Lo único que queda es
+aplicar el esquema a `production` y desplegar — ver la sección 4.7.
 
 ---
 
@@ -53,7 +54,7 @@ vuelve a emitir una acotada al proyecto.
 
 ---
 
-## 2. Decisión que hay que tomar primero (bloquea el diseño)
+## 2. La decisión de fondo (ya tomada: Opción A)
 
 `neon.ts` quedó con `auth: true`, así que el proyecto expone **Neon Auth**
 (`NEON_AUTH_BASE_URL`, `NEON_AUTH_JWKS_URL`). Pero el backend **ya tiene su propio login con
@@ -72,8 +73,9 @@ Se reemplaza la emisión del JWT propio por validación de tokens contra el JWKS
 gestión de usuarios sin código propio, pero obliga a rehacer `requireAdmin`, el callback de
 Google y el flujo del panel, y a repensar la allowlist de correos.
 
-**Todo lo que sigue en este documento asume la Opción A.** Si se elige B, hay que planificar
-esa parte aparte.
+**Se tomó la Opción A.** Neon quedó como base de datos y nada más; `src/plugins/auth.js` no
+se tocó. `neon.ts` sigue con `auth: true`: cambiarlo a `false` apagaría un servicio que no se
+está usando, pero es una decisión de infraestructura aparte y no bloquea nada.
 
 ---
 
@@ -87,18 +89,19 @@ Migrar a Neon es lo que habilita el despliegue a producción.
 
 ---
 
-## 4. Trabajo restante
+## 4. La migración, paso por paso
 
-### Paso 4.1 — Verificar que la conexión funciona
+### Paso 4.1 — Verificar que la conexión funciona  ✅ HECHO (2026-09-09)
 
-Esto quedó pendiente cuando se interrumpió la sesión anterior. **No está verificado.**
+Respondió `PostgreSQL 18.6`, base `neondb`, rama `production`. El script de prueba se borró
+después de correrlo, como estaba previsto.
 
 ```bash
 cd backend-coyote-s-house
 neon connection-string production          # confirma la cadena
 ```
 
-Prueba real de conectividad (crea el archivo, córrelo, bórralo):
+Lo que se ejecutó (archivo temporal, borrado después):
 
 ```js
 // verificar-neon.mjs
@@ -107,7 +110,8 @@ const sql = neon(process.env.DATABASE_URL);
 console.log(await sql`select version(), current_database(), now()`);
 ```
 
-Si falla por red o SSL, revisar `sslmode=require` y si hay IP Allow activo en el proyecto.
+No hizo falta tocar `sslmode` ni IP Allow: la cadena que escribe `neon link` ya trae
+`sslmode=require` y el proyecto no tiene lista de IP activa.
 
 ### Paso 4.2 — Dejar `DATABASE_URL` al alcance del backend  ✅ HECHO (2026-09-09)
 
@@ -140,148 +144,140 @@ the policy*; `npm test` → 23 pruebas OK y 1280 comparaciones sin divergencias.
 > política de branches) para no alterar la infraestructura. Si alguna vez se adopta esa plantilla,
 > revisar el TTL antes de correr `neon deploy`.
 
-### Paso 4.3 — Crear el esquema
+### Paso 4.3 — Crear el esquema  ✅ HECHO (2026-09-09)
+
+`npm i @neondatabase/serverless`. El esquema quedó en
+[`migrations/001_init.sql`](backend-coyote-s-house/migrations/001_init.sql), tal como estaba
+diseñado en este plan: `schedule_days`, `schedule_exceptions`, `banners` (fila única) y
+`audit_log`, con su índice. La zona horaria no entró a la base: sigue siendo la constante
+`config.timezone`.
+
+Para aplicarlo hizo falta algo que el plan no contemplaba: el driver HTTP de Neon rechaza
+varios comandos en una misma llamada (*cannot insert multiple commands into a prepared
+statement*), así que un `.sql` con cinco enunciados no se puede mandar de una. Se agregó
+[`migrations/aplicar-esquema.mjs`](backend-coyote-s-house/migrations/aplicar-esquema.mjs),
+que separa el archivo por `;` —descartando antes los comentarios, para no cortar por un `;`
+escrito dentro de una explicación— y los manda de a uno.
 
 ```bash
-npm i @neondatabase/serverless
+npm run db:migrate                          # usa DATABASE_URL del .env
+DATABASE_URL=<otra-rama> npm run db:migrate  # apunta a otra rama
 ```
 
-> Se elige `@neondatabase/serverless` porque su `Pool` es compatible con la API de `pg` y
-> sirve tanto en servidor persistente como serverless. `pg` a secas también funciona.
+No hay tabla de migraciones aplicadas: son cuatro tablas y todo el DDL va con
+`if not exists`, así que repetirlo es inofensivo. Cuando el esquema crezca lo suficiente
+como para necesitar versionado, conviene cambiar a una herramienta dedicada antes que
+inflar ese script.
 
-Migración SQL (guardar como `backend-coyote-s-house/migrations/001_init.sql`):
+### Paso 4.4 — Escribir el adaptador  ✅ HECHO (2026-09-09)
 
-```sql
--- Las horas se guardan como texto 'HH:MM' a propósito: es el formato exacto que ya
--- validan los esquemas y que consumen el panel y el sitio. Usar el tipo `time`
--- obligaría a reformatear '09:00:00' -> '09:00' en cada lectura, sin ganar nada.
-create table if not exists schedule_days (
-  day_index  smallint primary key check (day_index between 0 and 6),
-  open_time  text not null check (open_time  ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
-  close_time text not null check (close_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
-  closed     boolean not null default false,
-  updated_at timestamptz not null default now(),
-  updated_by text
-);
+[`src/repositories/neon-store.js`](backend-coyote-s-house/src/repositories/neon-store.js),
+con la misma pareja `{ get, save }` que `json-store.js`. El driver se elige en una sola
+línea de cada repositorio, según `config.storageDriver`. **No se tocó nada fuera de
+`src/repositories/`**: ni rutas, ni esquemas de validación, ni el panel.
 
-create table if not exists schedule_exceptions (
-  exception_date date primary key,
-  closed     boolean not null default true,
-  open_time  text check (open_time  ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
-  close_time text check (close_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
-  label      text not null default '',
-  updated_at timestamptz not null default now(),
-  updated_by text
-);
+Tres decisiones que el plan dejaba abiertas:
 
--- Fila única: el sitio tiene un solo banner.
-create table if not exists banners (
-  id         smallint primary key default 1 check (id = 1),
-  enabled    boolean not null default false,
-  message    text not null default '',
-  link_url   text not null default '',
-  speed      text not null default 'normal' check (speed in ('slow','normal','fast')),
-  starts_at  timestamptz,
-  ends_at    timestamptz,
-  updated_at timestamptz not null default now(),
-  updated_by text
-);
+- **Driver HTTP (`neon`), no `Pool` por WebSocket.** `sql.transaction([...])` da la
+  atomicidad que se exigía —los enunciados de cada guardado se conocen de antemano— sin
+  arrastrar la dependencia `ws`, que haría falta en Node 20 porque todavía no trae
+  `WebSocket` global y el `package.json` declara `node >=20.11.0`.
+- **Las fechas se leen con `to_char(exception_date, 'YYYY-MM-DD')`.** Devolver la columna
+  `date` en crudo hace que el driver la convierta en un `Date` de la zona local, y una
+  excepción del 18 de septiembre puede terminar guardada como el 17. Verificado: `2026-09-18`
+  y `2026-12-25` vuelven idénticas.
+- **`updatedAt` es `null` mientras `updated_by` lo sea.** Las filas recién sembradas traen
+  `updated_at = now()` por el DEFAULT de la tabla, pero nadie las editó; el store de JSON en
+  ese caso devuelve `null`. Sin esta regla los dos drivers no darían la misma respuesta.
 
--- En JSON no valía la pena; en Postgres sale gratis y responde
--- "quién cambió el horario y cuándo".
-create table if not exists audit_log (
-  id         bigserial primary key,
-  entity     text not null check (entity in ('schedule', 'banner')),
-  payload    jsonb not null,
-  changed_by text not null,
-  changed_at timestamptz not null default now()
-);
+Los `timestamptz` se devuelven como string ISO, igual que el driver JSON, para que la forma
+de la API pública no cambie según el motor de almacenamiento.
 
-create index if not exists audit_log_entity_fecha_idx
-  on audit_log (entity, changed_at desc);
-```
+### Paso 4.5 — Migrar los datos actuales  ✅ HECHO (2026-09-09)
 
-La zona horaria (`America/Santiago`) **no** va en la base: ya es una constante en
-`config.timezone` y no es algo que el taller edite.
-
-### Paso 4.4 — Escribir el adaptador
-
-Crear `backend-coyote-s-house/src/repositories/neon-store.js` cumpliendo **exactamente** el
-mismo contrato que ya usan las rutas:
-
-```
-get()                -> Promise<Schedule | Banner>
-save(datos, usuario) -> Promise<Schedule | Banner>   (sella updatedAt / updatedBy)
-```
-
-Puntos a respetar para que nada más cambie:
-
-- `get()` del horario debe devolver **siempre los 7 días**, igual que `normalizeSchedule()`
-  en [`schedule.repo.js`](backend-coyote-s-house/src/repositories/schedule.repo.js). Si la
-  tabla está vacía, sembrar con `DEFAULT_SCHEDULE` de
-  [`src/lib/defaults.js`](backend-coyote-s-house/src/lib/defaults.js).
-- Las excepciones se devuelven **ordenadas por fecha ascendente**.
-- `save()` del horario reemplaza los 7 días y **todas** las excepciones dentro de una
-  **transacción**: hoy el archivo JSON se escribe de forma atómica y esa garantía no se
-  puede perder, o un fallo a medio guardar dejaría un horario incoherente en el sitio.
-- Escribir también en `audit_log` dentro de la misma transacción.
-
-Luego, en `src/config.js` / donde corresponda, seleccionar el driver según
-`STORAGE_DRIVER` (`json` | `neon`), que ya existe como variable.
-
-### Paso 4.5 — Migrar los datos actuales
-
-Script `backend-coyote-s-house/migrations/migrar-json-a-neon.mjs` que lea
-`data/schedule.json` y `data/banner.json` y los inserte. Debe ser **idempotente**
-(`on conflict do update`), para poder correrlo dos veces sin duplicar.
-
-Si los JSON no existen todavía, sembrar directamente desde `DEFAULT_SCHEDULE` /
+[`migrations/migrar-json-a-neon.mjs`](backend-coyote-s-house/migrations/migrar-json-a-neon.mjs),
+expuesto como `npm run db:seed`. Reutiliza `normalizeSchedule` y `normalizeBanner` en vez de
+leer el JSON en crudo, para que un archivo viejo o editado a mano entre con la forma que
+exige el resto del backend. Si los JSON no existen, siembra desde `DEFAULT_SCHEDULE` /
 `DEFAULT_BANNER`.
 
-### Paso 4.6 — Cambiar el driver
+Idempotencia comprobada corriéndolo dos veces seguidas: `schedule_days` sigue con 7 filas y
+`banners` con una. `audit_log` sí acumula una entrada por corrida, que es justamente su
+oficio.
 
-En `backend-coyote-s-house/.env`:
+`updatedBy` se conserva tal cual venía en el JSON. Como nunca se había editado, las filas
+quedan con `'desconocido'` en vez de atribuirle el cambio a quien corre el script.
+
+### Paso 4.6 — Cambiar el driver  ⏸ PENDIENTE, a propósito
+
+El `.env` local **sigue en `STORAGE_DRIVER=json`**. El motivo: su `DATABASE_URL` apunta a
+`production`, y `production` todavía no tiene las tablas. Ver 4.7.
+
+---
+
+### Paso 4.7 — Lo único que queda
+
+Todo lo anterior está hecho y verificado **sobre la rama `dev`** (`br-raspy-leaf-acxjfpas`,
+creada con `neon branch create --name dev`). `production` sigue sin una sola tabla, intacta.
+
+Para terminar:
+
+```bash
+cd backend-coyote-s-house
+npm run db:migrate     # crea las 4 tablas en production
+npm run db:seed        # vuelca data/*.json
+```
+
+y después poner en el `.env` (o en las variables del hosting):
 
 ```
 STORAGE_DRIVER=neon
 ```
 
-**Rutas, esquemas de validación y el panel no se tocan.** Ese es justamente el punto de la
-capa de repositorio: si hubo que modificar algo fuera de `src/repositories/`, es señal de que
-el adaptador no está respetando el contrato.
+Ninguno de los dos comandos destruye nada: `production` está vacía y ambos son idempotentes.
 
 ---
 
-## 5. Verificación
+## 5. Verificación  ✅ HECHA
+
+Las dos suites pasan **sin modificar una sola aserción**, con los dos drivers:
+
+| | `npm test` (json) | `STORAGE_DRIVER=neon` + rama `dev` |
+|---|---|---|
+| `test/api.test.mjs` | 23 / 23 | 23 / 23 |
+| `test/paridad.test.mjs` | 1.280, 0 divergencias | 1.280, 0 divergencias |
+
+Comprobado además contra la base, en un proceso aparte del que escribió: los 7 días con
+`updated_by = 'alberto@gmail.com'`, la excepción `2026-09-18` con su etiqueta, el banner
+programado a 2099 y 10 entradas en `audit_log`.
+
+**Persistencia tras reiniciar** —el punto de toda la migración— probada explícitamente: un
+proceso guarda el miércoles 08:15-16:45 y una excepción de Navidad; un proceso nuevo, sin
+nada en memoria, lo lee idéntico desde Postgres.
+
+### La guarda contra escribir en producción
+
+El plan advertía que `api.test.mjs` con `STORAGE_DRIVER=neon` escribiría en la base real. Se
+resolvió con una guarda al inicio del archivo: compara el `DATABASE_URL` en uso contra el
+declarado en el `.env` —que es el de `production`— ignorando el sufijo `-pooler`, y si son
+el mismo endpoint aborta explicando cómo apuntar a `dev`. Es lo único que se agregó a las
+pruebas; ninguna aserción cambió.
+
+Las tres rutas verificadas: con `json` corre normal; con `neon` + `production` aborta; con
+`neon` + `dev` corre y pasa.
+
+La cadena de `dev` quedó en el `.env` como `DATABASE_URL_TEST` (no se lee sola):
 
 ```bash
-cd backend-coyote-s-house
-npm test
+DATABASE_URL=$DATABASE_URL_TEST STORAGE_DRIVER=neon npm test
 ```
 
-Las dos suites deben seguir en verde **sin modificarlas**:
+### Pruebas manuales que siguen pendientes
 
-- `test/api.test.mjs` — 23 pruebas: control de acceso, validaciones, guardado.
-- `test/paridad.test.mjs` — 1.280 comparaciones entre la lógica del servidor y la del
-  navegador.
+Necesitan un navegador y las credenciales de Google, así que no se pudieron cerrar aquí:
 
-> Ojo: `api.test.mjs` hoy respalda y restaura `data/*.json`. Con `STORAGE_DRIVER=neon`
-> escribiría contra la base **de producción**. Antes de correrlo así, apuntarlo a una rama
-> de desarrollo de Neon:
-> ```bash
-> neon branch create test-ci
-> ```
-> y usar esa `DATABASE_URL` en el test. Es la razón principal por la que conviene hacer todo
-> este trabajo sobre una rama y no sobre `production`.
-
-Pruebas manuales de punta a punta:
-
-1. Cambiar el horario en `/admin`, guardar → `select * from schedule_days;` refleja el cambio
-   con `updated_by`.
-2. Recargar el sitio → topbar, pie, contacto y FAQ muestran el horario nuevo.
-3. Reiniciar el backend → el horario **persiste** (esto es lo que hoy no se cumple).
-4. Apagar el backend → el sitio sigue en pie con el horario de respaldo, sin banner y con el
-   layout intacto.
+1. Cambiar el horario en `/admin` y verlo reflejado en el sitio.
+2. Apagar el backend y confirmar que el sitio sigue en pie con el horario de respaldo.
 
 ---
 
@@ -289,9 +285,10 @@ Pruebas manuales de punta a punta:
 
 Son independientes de esta migración, pero bloquean el uso real del panel:
 
-1. **Credenciales de Google.** `backend-coyote-s-house/.env` tiene `SESSION_SECRET` generado,
-   pero faltan `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y el correo de Alberto en
-   `ADMIN_ALLOWED_EMAILS`. Pasos exactos de Google Cloud Console en el
+1. **Credenciales de Google.** El `.env` ya tiene `SESSION_SECRET`, `GOOGLE_CLIENT_ID` y
+   `GOOGLE_CLIENT_SECRET`. Lo que falta es agregar **el correo de Alberto** a
+   `ADMIN_ALLOWED_EMAILS`, que hoy solo lista el de quien configuró esto. Sin eso, Alberto
+   recibe un 403 al entrar al panel. Pasos de Google Cloud Console en el
    [README del backend](backend-coyote-s-house/README.md#configurar-google-oauth).
 2. **`API_BASE` del sitio público.** En
    [`coyote-s-house/js/lib/site-config.js:34`](coyote-s-house/js/lib/site-config.js#L34) hay
@@ -304,20 +301,30 @@ Son independientes de esta migración, pero bloquean el uso real del panel:
 
 ---
 
-## 7. Orden sugerido
+## 7. Dónde quedó todo
 
 ```
-Decidir Opción A vs B  (sección 2)
+Opción A elegida  ·  login de Google intacto
         ↓
-4.1 verificar conexión ──► 4.2 wiring de DATABASE_URL
+4.1 conexión ✅ ──► 4.2 wiring ✅ ──► rama dev creada ✅
         ↓
-crear rama de Neon para desarrollo  (neon branch create dev)
+4.3 esquema ✅ ──► 4.4 adaptador ✅ ──► 4.5 datos ✅
         ↓
-4.3 esquema ──► 4.4 adaptador ──► 4.5 migrar datos ──► 4.6 cambiar driver
+npm test con los dos drivers ✅  ·  persistencia tras reinicio ✅
         ↓
-npm test + pruebas manuales
+4.7 aplicar a production  ⏸  ← lo único que falta
         ↓
-aplicar el esquema a production y desplegar
+desplegar (sección 6)
 ```
 
-Trabajar sobre una rama de Neon y recién al final tocar `production`.
+**Archivos nuevos:** `migrations/001_init.sql`, `migrations/aplicar-esquema.mjs`,
+`migrations/migrar-json-a-neon.mjs`, `src/repositories/neon-store.js`.
+
+**Archivos tocados:** `schedule.repo.js` y `banner.repo.js` (una línea cada uno: elegir el
+store), `package.json` (dependencia + `db:migrate` / `db:seed`), `test/api.test.mjs` (solo la
+guarda), `README.md`, `.env.example`.
+
+**Sin tocar:** rutas, esquemas de validación, panel, `src/plugins/auth.js`, `src/config.js`.
+Era la señal de que el adaptador respeta el contrato, y se cumplió.
+
+Nada está confirmado en git todavía: los cambios están en el árbol de trabajo.

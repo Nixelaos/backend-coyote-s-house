@@ -76,7 +76,8 @@ se corta de inmediato sin esperar a que expire la sesión.
 | `SESSION_SECRET` | sí | Firma del JWT de sesión. Mínimo 32 caracteres. |
 | `ADMIN_ALLOWED_EMAILS` | sí | Correos autorizados, separados por coma. |
 | `ALLOWED_ORIGINS` | no | Reservado para restringir orígenes más adelante. |
-| `STORAGE_DRIVER` | no | `json` (actual) o `neon` (futuro). |
+| `STORAGE_DRIVER` | no | `json` (archivos en `./data`) o `neon` (Postgres). |
+| `DATABASE_URL` | sí (con `neon`) | Cadena de conexión de Neon. La escribe `neon link`. |
 
 Generar un secreto:
 
@@ -155,28 +156,65 @@ src/
 │   ├── auth.js            Google OAuth, sesión JWT y guardia requireAdmin
 │   └── security.js        Helmet (CSP), límite de peticiones
 ├── routes/                public / auth / admin
-├── repositories/          Interfaz { get, save } — el punto de cambio para Neon
+├── repositories/          Interfaz { get, save }: json-store.js y neon-store.js
 ├── schemas/               JSON Schema + reglas de negocio en español
 └── lib/schedule-status.js Cálculo de abierto/cerrado en America/Santiago
 public/admin/              Panel: HTML, CSS y JS sin build ni dependencias
 data/                      schedule.json y banner.json (fuera de git)
+migrations/                001_init.sql y los scripts db:migrate / db:seed
 ```
 
 ---
 
-## Migrar a Neon
+## Almacenamiento: JSON o Neon
 
-Nada fuera de `src/repositories/` asume que hay archivos JSON. `schedule.repo.js` y
-`banner.repo.js` exponen solo `get()` y `save(datos, usuario)`. Para migrar:
+Nada fuera de `src/repositories/` sabe dónde viven los datos. `schedule.repo.js` y
+`banner.repo.js` exponen solo `get()` y `save(datos, usuario)`, y eligen el store según
+`STORAGE_DRIVER`. Rutas, esquemas de validación y panel son idénticos con uno u otro.
 
-1. `npm i @neondatabase/serverless drizzle-orm`
-2. Crear `src/repositories/neon-store.js` con esa misma interfaz.
-3. Poner `STORAGE_DRIVER=neon` y `DATABASE_URL=...` en el `.env`.
-4. Script de migración que lea los JSON y los inserte.
+| | `json` | `neon` |
+|---|---|---|
+| Dónde | `data/*.json` | Postgres en Neon |
+| Atomicidad | escritura a archivo temporal + `rename` | una transacción por guardado |
+| Sobrevive a un despliegue | **no** en planes gratuitos | sí |
+| Para qué | desarrollo local | producción |
 
-Rutas, esquemas y panel no se tocan. Tablas previstas: `schedule_days`,
-`schedule_exceptions`, `banners` y `audit_log` (quién cambió qué y cuándo, que en JSON no
-vale la pena pero en Postgres sale gratis).
+Tablas: `schedule_days`, `schedule_exceptions`, `banners` (fila única) y `audit_log`
+—quién cambió qué y cuándo, que en JSON no valía la pena y en Postgres sale gratis.
+
+Las horas se guardan como texto `'HH:MM'` a propósito: es el formato que ya validan los
+esquemas y que consumen el panel y el sitio. Con el tipo `time` habría que reformatear
+`'09:00:00'` en cada lectura sin ganar nada.
+
+### Poner en marcha la base
+
+```bash
+npm run db:migrate   # crea las tablas (idempotente)
+npm run db:seed      # vuelca data/*.json a Postgres (idempotente)
+```
+
+Ambos leen `DATABASE_URL` del `.env` y aceptan que se la pases por entorno para apuntar a
+otra rama. Después, en el `.env`:
+
+```
+STORAGE_DRIVER=neon
+```
+
+### Trabajar sobre una rama, no sobre production
+
+```bash
+neon branch create --name dev
+neon connection-string dev
+```
+
+Con `STORAGE_DRIVER=neon` y el `DATABASE_URL` del `.env`, **`npm test` escribe en la base
+que ahí esté configurada**. La suite guarda horarios y banners de mentira, así que contra
+`production` dejaría el sitio con un "Promo futura" y el viernes a las 15:00. Para correrla
+sin riesgo:
+
+```bash
+DATABASE_URL=<cadena-de-dev> STORAGE_DRIVER=neon npm test
+```
 
 ---
 
@@ -193,7 +231,7 @@ Al desplegar hay que hacer tres cosas:
    [`coyote-s-house/js/lib/site-config.js`](../coyote-s-house/js/lib/site-config.js) a la URL
    real del backend.
 
-> **Ojo con el disco.** En los planes gratuitos el sistema de archivos suele ser efímero: se
-> borra en cada despliegue y con él los `data/*.json`. Antes de que el taller empiece a usar
-> el panel en serio, conviene pasar a Neon o montar un volumen persistente. Si no, un
-> despliegue devolvería el horario a los valores por defecto sin avisar.
+> **Ojo con el disco.** En los planes gratuitos el sistema de archivos es efímero: se borra
+> en cada despliegue y con él los `data/*.json`. Por eso en producción `STORAGE_DRIVER` tiene
+> que ser `neon`. Con `json`, un despliegue devolvería el horario a los valores por defecto
+> sin avisarle a nadie.

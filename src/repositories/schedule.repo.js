@@ -12,6 +12,7 @@ import path from 'node:path';
 import config from '../config.js';
 import { DEFAULT_SCHEDULE } from '../lib/defaults.js';
 import { createJsonRepository } from './json-store.js';
+import { createNeonScheduleStore } from './neon-store.js';
 
 const DAY_KEYS = ['0', '1', '2', '3', '4', '5', '6'];
 
@@ -55,11 +56,20 @@ function normalizeSchedule(raw) {
   };
 }
 
-const store = createJsonRepository({
-  filePath: path.join(config.paths.data, 'schedule.json'),
-  defaults: DEFAULT_SCHEDULE,
-  normalize: normalizeSchedule
-});
+/**
+ * El driver se elige aquí y en ningún otro lado. Ambos stores exponen la misma
+ * pareja { get, save }, así que el resto del archivo no cambia según cuál esté
+ * activo. Si alguna vez hubo que tocar rutas o esquemas para migrar, el
+ * adaptador no estaba respetando el contrato.
+ */
+const store =
+  config.storageDriver === 'neon'
+    ? createNeonScheduleStore({ normalize: normalizeSchedule })
+    : createJsonRepository({
+        filePath: path.join(config.paths.data, 'schedule.json'),
+        defaults: DEFAULT_SCHEDULE,
+        normalize: normalizeSchedule
+      });
 
 export const scheduleRepository = {
   get() {

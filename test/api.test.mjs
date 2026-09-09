@@ -7,9 +7,51 @@
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import fs from 'node:fs';
+import dotenv from 'dotenv';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const RAIZ = path.resolve(AQUI, '..');
+
+// --- Guarda: nunca correr contra la base de producción --------------------
+//
+// Estas pruebas guardan horarios y banners de mentira. Con el driver JSON eso
+// toca data/*.json y se restaura al final; con STORAGE_DRIVER=neon va a una
+// base real y no hay restauración posible. Si esa base fuera la de production,
+// el sitio quedaría publicando "Promo futura" y el viernes a las 15:00 hasta
+// que alguien se diera cuenta.
+//
+// El DATABASE_URL declarado en el .env es el de production, así que basta con
+// comparar: si la conexión en uso apunta al mismo endpoint, la suite se niega
+// a correr y explica cómo apuntarla a la rama de desarrollo.
+{
+  const rutaEnv = path.join(RAIZ, '.env');
+  const declarado = fs.existsSync(rutaEnv) ? dotenv.parse(fs.readFileSync(rutaEnv)) : {};
+  const driver = process.env.STORAGE_DRIVER || declarado.STORAGE_DRIVER || 'json';
+
+  if (driver === 'neon') {
+    // El endpoint con y sin pooler es la misma rama; se compara sin ese sufijo.
+    const endpoint = (url) => {
+      try {
+        return new URL(url).host.replace('-pooler', '');
+      } catch {
+        return '';
+      }
+    };
+
+    const enUso = endpoint(process.env.DATABASE_URL || declarado.DATABASE_URL || '');
+    const produccion = endpoint(declarado.DATABASE_URL || '');
+
+    if (enUso && enUso === produccion) {
+      console.error(
+        '\nABORTADO: con STORAGE_DRIVER=neon estas pruebas escribirían en la base de\n' +
+          `producción (${enUso}). Apúntalas a una rama de desarrollo:\n\n` +
+          '  DATABASE_URL=$DATABASE_URL_TEST STORAGE_DRIVER=neon npm test\n\n' +
+          'Si no tienes una, créala con:  neon branch create --name dev\n'
+      );
+      process.exit(1);
+    }
+  }
+}
 
 // Credenciales de mentira para activar el camino de autenticación sin tocar
 // Google, y una carpeta de datos aparte para no pisar los datos reales.

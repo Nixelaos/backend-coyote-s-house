@@ -12,6 +12,7 @@ import path from 'node:path';
 import config from '../config.js';
 import { DEFAULT_BANNER } from '../lib/defaults.js';
 import { createJsonRepository } from './json-store.js';
+import { createNeonBannerStore } from './neon-store.js';
 
 const VALID_SPEEDS = new Set(['slow', 'normal', 'fast']);
 
@@ -55,11 +56,15 @@ export function resolveBannerVisibility(banner, reference = new Date()) {
   return true;
 }
 
-const store = createJsonRepository({
-  filePath: path.join(config.paths.data, 'banner.json'),
-  defaults: DEFAULT_BANNER,
-  normalize: normalizeBanner
-});
+// Mismo criterio que en schedule.repo.js: el driver se elige una sola vez.
+const store =
+  config.storageDriver === 'neon'
+    ? createNeonBannerStore({ normalize: normalizeBanner })
+    : createJsonRepository({
+        filePath: path.join(config.paths.data, 'banner.json'),
+        defaults: DEFAULT_BANNER,
+        normalize: normalizeBanner
+      });
 
 export const bannerRepository = {
   get() {
