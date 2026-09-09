@@ -24,3 +24,6 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Workspace de Neon (orgId/projectId del proyecto enlazado)
+.neon
