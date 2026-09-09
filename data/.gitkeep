@@ -1,0 +1,2 @@
+# Los archivos schedule.json y banner.json se crean solos en el primer arranque.
+# Se ignoran en git: son datos, no código.

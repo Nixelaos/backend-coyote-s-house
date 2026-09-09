@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Variables de entorno (NUNCA subir: contienen el secreto de Google OAuth)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Datos persistidos en desarrollo local
+data/*.json
+!data/.gitkeep
+
+# Archivos temporales de escritura atómica
+data/*.tmp
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

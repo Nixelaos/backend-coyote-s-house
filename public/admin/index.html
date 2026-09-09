@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel de Coyote's House</title>
+  <meta name="robots" content="noindex, nofollow">
+
+  <link rel="icon" type="image/jpeg" href="logo.jpg">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=Kanit:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+  <header class="admin-header">
+    <div class="admin-brand">
+      <img src="logo.jpg" alt="" class="admin-brand-logo" width="36" height="36">
+      <div class="admin-brand-text">
+        <div class="admin-brand-title">Coyote's House</div>
+        <div class="admin-brand-subtitle">Panel de administración</div>
+      </div>
+    </div>
+
+    <div class="admin-user" id="user-chip" hidden>
+      <img src="" alt="" class="admin-user-avatar" id="user-avatar" width="34" height="34">
+      <span class="admin-user-name" id="user-name"></span>
+      <button type="button" class="btn btn-ghost btn-sm" id="logout-button">Salir</button>
+    </div>
+  </header>
+
+  <div class="loading-state" id="loading">
+    <div class="spinner" role="status" aria-label="Cargando"></div>
+    Cargando la configuración del taller...
+  </div>
+
+  <main class="admin-main" id="app" hidden>
+
+    <!-- ===== Vista previa en vivo ===== -->
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title"><span class="card-title-icon" aria-hidden="true">👁️</span> Vista previa</h2>
+        <span class="card-hint">Así se verá en el sitio</span>
+      </div>
+      <div class="card-body">
+        <div class="preview-frame">
+          <div class="preview-banner" id="preview-banner" hidden>
+            <div class="preview-banner-track" id="preview-track"></div>
+          </div>
+          <div class="preview-topbar">
+            <span class="status-badge open" id="preview-status">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span id="preview-status-text">Cargando...</span>
+            </span>
+            <span class="preview-summary" id="preview-summary"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Horario de atención ===== -->
+    <form class="card" id="schedule-form" novalidate>
+      <div class="card-header">
+        <h2 class="card-title"><span class="card-title-icon" aria-hidden="true">🕒</span> Horario de atención</h2>
+        <span class="unsaved-flag" id="schedule-unsaved">● Sin guardar</span>
+      </div>
+
+      <div class="card-body">
+        <div class="day-list" id="day-list"></div>
+
+        <div class="section-divider">
+          <div class="section-subtitle">Días especiales</div>
+          <p class="field-help">
+            Feriados, vacaciones o días con horario distinto. Lo que pongas aquí manda
+            por sobre el horario semanal de esa fecha.
+          </p>
+        </div>
+
+        <div class="exception-list" id="exception-list"></div>
+        <div class="exception-empty" id="exception-empty">No hay días especiales configurados.</div>
+
+        <button type="button" class="btn btn-ghost btn-sm" id="add-exception">+ Agregar día especial</button>
+      </div>
+
+      <div class="card-footer">
+        <span class="card-meta" id="schedule-meta"></span>
+        <button type="submit" class="btn btn-primary" id="schedule-save" disabled>Guardar horario</button>
+      </div>
+    </form>
+
+    <!-- ===== Banner de anuncios ===== -->
+    <form class="card" id="banner-form" novalidate>
+      <div class="card-header">
+        <h2 class="card-title"><span class="card-title-icon" aria-hidden="true">📢</span> Banner de anuncios</h2>
+        <span class="unsaved-flag" id="banner-unsaved">● Sin guardar</span>
+      </div>
+
+      <div class="card-body">
+        <div class="field">
+          <label class="switch">
+            <input type="checkbox" id="banner-enabled">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-label" id="banner-enabled-label">Desactivado</span>
+          </label>
+          <span class="field-help">
+            Cuando está activo aparece una franja naranja en movimiento arriba de todo el sitio.
+          </span>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="banner-message">Mensaje</label>
+          <input type="text" id="banner-message" maxlength="200"
+                 placeholder="Ej: Promoción de septiembre: cambio de aceite + filtro con 20% de descuento">
+          <span class="char-count" id="banner-count">0 / 200</span>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="banner-link">Enlace (opcional)</label>
+          <input type="text" id="banner-link" maxlength="300" placeholder="Ej: cotizador.html">
+          <span class="field-help">
+            Página del sitio a la que lleva el banner al hacer clic. Déjalo vacío si no quieres que sea clicable.
+          </span>
+        </div>
+
+        <div class="field">
+          <span class="field-label">Velocidad del texto</span>
+          <div class="radio-group" role="radiogroup" aria-label="Velocidad del texto">
+            <label class="radio-chip">
+              <input type="radio" name="banner-speed" value="slow"> Lenta
+            </label>
+            <label class="radio-chip">
+              <input type="radio" name="banner-speed" value="normal" checked> Normal
+            </label>
+            <label class="radio-chip">
+              <input type="radio" name="banner-speed" value="fast"> Rápida
+            </label>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label class="field-label" for="banner-starts">Mostrar desde (opcional)</label>
+            <input type="date" id="banner-starts">
+          </div>
+          <div class="field">
+            <label class="field-label" for="banner-ends">Mostrar hasta (opcional)</label>
+            <input type="date" id="banner-ends">
+          </div>
+        </div>
+        <p class="field-help">
+          Si defines fechas, el banner se publica y se retira solo. Útil para promociones
+          que no quieres acordarte de apagar.
+        </p>
+      </div>
+
+      <div class="card-footer">
+        <span class="card-meta" id="banner-meta"></span>
+        <button type="submit" class="btn btn-primary" id="banner-save" disabled>Guardar banner</button>
+      </div>
+    </form>
+
+  </main>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+  <!-- ===== Plantillas ===== -->
+
+  <template id="tpl-day-row">
+    <div class="day-row">
+      <span class="day-name"></span>
+      <label class="switch">
+        <input type="checkbox" class="day-toggle">
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+        <span class="switch-label">Abierto</span>
+      </label>
+      <div class="day-times">
+        <input type="time" class="day-open" aria-label="Hora de apertura">
+        <span class="day-sep">a</span>
+        <input type="time" class="day-close" aria-label="Hora de cierre">
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-exception-row">
+    <div class="exception-row">
+      <input type="date" class="exception-date" aria-label="Fecha del día especial">
+      <label class="switch switch--danger">
+        <input type="checkbox" class="exception-closed" checked>
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+        <span class="switch-label">Cerrado</span>
+      </label>
+      <div class="day-times exception-times">
+        <input type="time" class="exception-open" aria-label="Hora de apertura del día especial">
+        <span class="day-sep">a</span>
+        <input type="time" class="exception-close" aria-label="Hora de cierre del día especial">
+      </div>
+      <input type="text" class="exception-label exception-label-field" maxlength="60" placeholder="Motivo (ej: Fiestas Patrias)">
+      <button type="button" class="btn btn-icon-danger exception-remove" aria-label="Eliminar día especial">🗑️</button>
+    </div>
+  </template>
+
+  <script defer src="admin.js"></script>
+</body>
+</html>
