@@ -264,9 +264,12 @@ Verificado el 11/09: en Google Console solo existe la URI de `localhost`, y
 `ADMIN_ALLOWED_EMAILS` del `.env` local tiene un solo correo. Este es el único paso que
 **bloquea el login** aunque todo lo demás funcione.
 
-**Falta un dato que solo tú tienes: el correo de Google de Alberto.** Sin él no se puede
-cerrar ni este paso ni el `.env` de la sección 5.2, y sin eso recibe un 403 aunque el login
-de Google funcione.
+**Decisión del 11/09: por ahora la allowlist lleva solo `nnicolaslf@gmail.com`.** El correo de
+Alberto se agrega cuando lo tengas, sin redesplegar: es una línea más en
+`/etc/coyote/backend.env` y un `systemctl restart coyote-backend`. Hasta entonces, si Alberto
+intenta entrar recibe un 403 aunque el login de Google funcione — es lo esperado. Lo que sí
+sigue bloqueando el login es la **URI de redireccionamiento de producción** en Google Console
+(punto 1 de arriba).
 
 ---
 
@@ -317,7 +320,8 @@ PUBLIC_BASE_URL=https://coyoteshouse.cl
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 SESSION_SECRET=...
-ADMIN_ALLOWED_EMAILS=nnicolaslf@gmail.com,correo-de-alberto@gmail.com
+# Por ahora solo tú; el correo de Alberto se agrega después (ver 4.6).
+ADMIN_ALLOWED_EMAILS=nnicolaslf@gmail.com
 
 STORAGE_DRIVER=neon
 DATABASE_URL=<cadena de la rama production>
@@ -645,7 +649,7 @@ A. Preparacion, desde tu maquina, independiente del diseño
    4.1 push                                 [hecho]
    4.4 @neon/* a devDependencies            [hecho]  -->  commit junto al movimiento de tests
    4.3 db:migrate + db:seed en production   [pendiente: escribe en produccion, va con tu OK]
-   4.6 Google Console + correo de Alberto   [pendiente: bloquea el login]
+   4.6 URI de produccion en Google Console  [pendiente: bloquea el login; allowlist solo tu correo por ahora]
            |
 B. Cambios de diseño (decision del 11/09)
    espejo JSON: guardar en Neon --> escribir data/*.json; el render lee del disco
