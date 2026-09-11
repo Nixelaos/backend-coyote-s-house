@@ -4,8 +4,8 @@ Backend en **Fastify** que permite al taller editar su **horario de atención** 
 **banner de anuncios** en el sitio, sin tocar código ni hacer despliegues.
 
 ```
-Panel /admin  ──login Google──►  Fastify  ──►  repositorio  ──►  data/*.json   (hoy)
-                                    │                        └──►  Neon Postgres  (después)
+Panel /admin  ──login Google──►  Fastify  ──►  repositorio  ──►  Neon Postgres  (verdad)
+                                    │                        └──►  data/*.json    (espejo que lee el sitio)
                                     │
 Sitio público (Netlify) ◄──GET /api/public/site-config
 ```
@@ -76,8 +76,9 @@ se corta de inmediato sin esperar a que expire la sesión.
 | `SESSION_SECRET` | sí | Firma del JWT de sesión. Mínimo 32 caracteres. |
 | `ADMIN_ALLOWED_EMAILS` | sí | Correos autorizados, separados por coma. |
 | `ALLOWED_ORIGINS` | no | Reservado para restringir orígenes más adelante. |
-| `STORAGE_DRIVER` | no | `json` (archivos en `./data`) o `neon` (Postgres). |
+| `STORAGE_DRIVER` | no | `json` (archivos en `./data`) o `neon` (Postgres como verdad + espejo JSON en `./data`). |
 | `DATABASE_URL` | sí (con `neon`) | Cadena de conexión de Neon. La escribe `neon link`. |
+| `DATA_DIR` | no | Carpeta del almacenamiento o del espejo. Por defecto `./data`; en Vercel `/tmp/coyote-data`. |
 
 Generar un secreto:
 
@@ -133,8 +134,10 @@ Las pruebas viven en el proyecto hermano `tests-backend-coyote-s-house/`, fuera 
 repositorio: la suite de paridad compara este backend contra el sitio público, así que no
 pertenece del todo a ninguno de los dos. `npm test` desde aquí las invoca igual.
 
-Dos suites, sin dependencias de desarrollo:
+Tres suites, sin dependencias de desarrollo:
 
+- **`mirror.test.mjs`** — el espejo JSON delante de Neon, con un primario en memoria (sin
+  red): reconstrucción, guardado en dos capas y los dos modos de fallo.
 - **`api.test.mjs`** — control de acceso, validaciones y guardado, usando
   `fastify.inject` (sin abrir puertos). Restaura los datos al terminar.
 - **`paridad.test.mjs`** — compara `src/lib/schedule-status.js` (servidor) contra
@@ -160,28 +163,38 @@ src/
 │   ├── auth.js            Google OAuth, sesión JWT y guardia requireAdmin
 │   └── security.js        Helmet (CSP), límite de peticiones
 ├── routes/                public / auth / admin
-├── repositories/          Interfaz { get, save }: json-store.js y neon-store.js
+├── repositories/          Interfaz { get, save }: json-store.js, neon-store.js y mirror-store.js
 ├── schemas/               JSON Schema + reglas de negocio en español
 └── lib/schedule-status.js Cálculo de abierto/cerrado en America/Santiago
 public/admin/              Panel: HTML, CSS y JS sin build ni dependencias
-data/                      schedule.json y banner.json (fuera de git)
+data/                      schedule.json y banner.json (fuera de git); con neon, espejo de la base
 migrations/                001_init.sql y los scripts db:migrate / db:seed
 ```
 
 ---
 
-## Almacenamiento: JSON o Neon
+## Almacenamiento: JSON o Neon (+ espejo)
 
 Nada fuera de `src/repositories/` sabe dónde viven los datos. `schedule.repo.js` y
-`banner.repo.js` exponen solo `get()` y `save(datos, usuario)`, y eligen el store según
-`STORAGE_DRIVER`. Rutas, esquemas de validación y panel son idénticos con uno u otro.
+`banner.repo.js` exponen solo `get()`, `save(datos, usuario)` y `hydrate()`, y eligen el
+store según `STORAGE_DRIVER`. Rutas, esquemas de validación y panel son idénticos con uno u
+otro.
 
 | | `json` | `neon` |
 |---|---|---|
-| Dónde | `data/*.json` | Postgres en Neon |
-| Atomicidad | escritura a archivo temporal + `rename` | una transacción por guardado |
-| Sobrevive a un despliegue | **no** en planes gratuitos | sí |
+| Fuente de verdad | `data/*.json` | Postgres en Neon |
+| Qué lee el sitio | `data/*.json` | **`data/*.json`**, un espejo que se reescribe en cada guardado |
+| Atomicidad | escritura a archivo temporal + `rename` | una transacción en Neon y después el `rename` del espejo |
+| Sobrevive a perder la máquina | no | sí (Neon; el espejo se reconstruye solo al arrancar) |
 | Para qué | desarrollo local | producción |
+
+**Por qué el espejo.** Con `neon`, la lectura pública no toca la red: sale del disco local en
+menos de un milisegundo y sigue funcionando aunque Neon esté suspendida, lenta o caída. Neon
+queda solo en el camino de escritura (el panel) y como la copia que sobrevive a la VM. Al
+arrancar, si el espejo no existe o está corrupto, se reconstruye desde Neon una vez
+(`hydrate()`); si el espejo no se puede escribir después de un guardado, el guardado **falla
+con un mensaje claro** en vez de dejar el sitio mostrando datos viejos en silencio. La lógica
+vive en `mirror-store.js` y está probada sin red en `mirror.test.mjs`.
 
 Tablas: `schedule_days`, `schedule_exceptions`, `banners` (fila única) y `audit_log`
 —quién cambió qué y cuándo, que en JSON no valía la pena y en Postgres sale gratis.

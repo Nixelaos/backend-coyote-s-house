@@ -13,6 +13,8 @@ import authPlugin from './plugins/auth.js';
 import publicRoutes from './routes/public.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import { scheduleRepository } from './repositories/schedule.repo.js';
+import { bannerRepository } from './repositories/banner.repo.js';
 
 /**
  * Traduce un error de JSON Schema a algo que una persona pueda entender.
@@ -72,6 +74,31 @@ export async function buildServer() {
   await fastify.register(publicRoutes);
   await fastify.register(authRoutes);
   await fastify.register(adminRoutes);
+
+  // Con el driver neon, el sitio lee de un espejo JSON en disco. Se prepara
+  // antes de aceptar tráfico para que la primera visita no pague el viaje a
+  // Neon. No es fatal: si Neon no responde ahora pero la copia existe, el
+  // sitio sirve igual; y si no existe, la primera petición lo reintenta.
+  if (config.storageDriver === 'neon') {
+    fastify.addHook('onReady', async () => {
+      const repos = [
+        ['horario', scheduleRepository],
+        ['banner', bannerRepository]
+      ];
+
+      for (const [recurso, repo] of repos) {
+        try {
+          const origen = await repo.hydrate();
+          fastify.log.info({ recurso, origen }, 'Espejo en disco listo');
+        } catch (error) {
+          fastify.log.warn(
+            { err: error, recurso },
+            'No se pudo preparar el espejo en disco; se reintentará en la primera petición'
+          );
+        }
+      }
+    });
+  }
 
   // Panel de administración (archivos estáticos).
   await fastify.register(fastifyStatic, {

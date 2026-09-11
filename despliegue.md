@@ -38,7 +38,7 @@ Fecha: 2026-09-09. Revisado contra el sitio en vivo, Neon y los repos: 2026-09-1
 | Sitio público | **Servido por nginx desde la VM**, detrás de Cloudflare. El clon está en `8a5f346` (26/08), **dos commits atrás** de `origin/main` |
 | Reseñas de Google | JSON estático en la VM, refrescado por un script diario propio. Verificado 11/09: 200, 3254 bytes |
 | Backend | Solo corre en tu máquina, en `localhost:3000`. **En la VM no hay nada**: ni usuario, ni clon, ni env, ni unidad |
-| Neon | Rama `production` (`br-shiny-mouse-acxls5cn`) **sin las tablas de la app**; rama `dev` (`br-raspy-leaf-acxjfpas`) con las 4 tablas. Región `aws-sa-east-1`, PG 18, PITR de 6 h |
+| Neon | Rama `production` (`br-shiny-mouse-acxls5cn`) **con las 4 tablas y la semilla desde el 11/09** (7 días, banner apagado); rama `dev` (`br-raspy-leaf-acxjfpas`) también. Región `aws-sa-east-1`, PG 18, PITR de 6 h |
 | Cloudflare | SSL/TLS en modo **Full** (no strict). El HTML sale `cf-cache-status: DYNAMIC`; el CSS con `max-age=14400` |
 | nginx | **Sin** `set_real_ip_from`: las peticiones llegan con la IP de Cloudflare |
 | Google Cloud Console | Solo `http://localhost:3000/auth/google/callback`. Falta la URI de producción y el correo de Alberto |
@@ -117,7 +117,10 @@ adaptador real: `/health` 200, `/api/public/site-config` 200, `/admin/` 200,
 
 **Pasos.** Crear dos proyectos en Vercel, uno por repo. En el del backend, definir las
 variables: `STORAGE_DRIVER=neon`, `DATABASE_URL` (rama `production`), `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `ADMIN_ALLOWED_EMAILS`. `PUBLIC_BASE_URL` se
+`GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `ADMIN_ALLOWED_EMAILS`, y **`DATA_DIR=/tmp/coyote-data`**:
+desde la fase B el driver `neon` escribe un espejo JSON en disco en cada guardado, y en Vercel
+el único directorio escribible es `/tmp`. Como `/tmp` no sobrevive entre instancias, cada
+arranque en frío rehidrata el espejo desde Neon — funciona, solo más lento que en la VM. `PUBLIC_BASE_URL` se
 deduce sola de la URL estable del proyecto, pero conviene fijarla explícitamente una vez que
 la conozcas. Después, agregar `https://<backend>.vercel.app/auth/google/callback` a Google
 Cloud Console y rellenar el marcador de
@@ -193,13 +196,14 @@ La URL de clonado de 5.1 queda `git@github.com:Nixelaos/backend-coyote-s-house.g
 `git pull` de actualización (8.8) usa la misma llave sin configurar nada más, porque `-H` deja
 `HOME=/opt/coyote` y ssh la encuentra en su ruta por defecto.
 
-### 4.3 Aplicar el esquema a Neon `production`
+### 4.3 Aplicar el esquema a Neon `production` — ✅ hecho
 
-Es el paso 4.7 que quedó pendiente en `plan.md`. Verificado el 2026-09-09: la rama
-`production` (`br-shiny-mouse-acxls5cn`) solo tiene el esquema `neon_auth`; las tablas de la
-aplicación no están. El `DATABASE_URL` del `.env` ya apunta a esa rama. **Vuelto a verificar
-el 11/09 por MCP: sigue igual.** La rama `dev` sí tiene `schedule_days`, `schedule_exceptions`,
-`banners` y `audit_log`.
+Es el paso 4.7 que quedó pendiente en `plan.md`. **Aplicado el 11/09** con los dos comandos de
+abajo, contra el `DATABASE_URL` del `.env` (endpoint `ep-bold-dawn-ac7xgnqy`, rama
+`production`). Verificado por MCP sobre `br-shiny-mouse-acxls5cn`: las 4 tablas existen,
+`schedule_days` tiene 7 filas (Lun–Vie 09:00–17:00, Sáb y Dom cerrados), `banners` 1 fila
+(apagado), `schedule_exceptions` 0 y `audit_log` 2 — idéntico a lo que el sitio muestra hoy.
+`updated_by` quedó en `desconocido` porque el JSON nunca se editó desde el panel.
 
 ```bash
 cd backend-coyote-s-house
@@ -648,11 +652,11 @@ toca **una sola vez**, con el diseño final. Tres fases.
 A. Preparacion, desde tu maquina, independiente del diseño
    4.1 push                                 [hecho]
    4.4 @neon/* a devDependencies            [hecho]  -->  commit junto al movimiento de tests
-   4.3 db:migrate + db:seed en production   [pendiente: escribe en produccion, va con tu OK]
+   4.3 db:migrate + db:seed en production   [hecho 11/09, verificado por MCP]
    4.6 URI de produccion en Google Console  [pendiente: bloquea el login; allowlist solo tu correo por ahora]
            |
 B. Cambios de diseño (decision del 11/09)
-   espejo JSON: guardar en Neon --> escribir data/*.json; el render lee del disco
+   espejo JSON: guardar en Neon --> escribir data/*.json; el render lee del disco   [hecho 11/09]
    render en servidor: banner, resumen, JSON-LD y datos dentro del HTML de las 9 paginas
    site-config.js: quitar fetch, sessionStorage y CONFIG_POR_DEFECTO
    fallar con 5xx si el espejo no se puede leer (no envenenar la cache)

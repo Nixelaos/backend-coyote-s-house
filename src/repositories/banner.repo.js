@@ -13,6 +13,7 @@ import config from '../config.js';
 import { DEFAULT_BANNER } from '../lib/defaults.js';
 import { createJsonRepository } from './json-store.js';
 import { createNeonBannerStore } from './neon-store.js';
+import { createMirroredStore } from './mirror-store.js';
 
 const VALID_SPEEDS = new Set(['slow', 'normal', 'fast']);
 
@@ -56,12 +57,24 @@ export function resolveBannerVisibility(banner, reference = new Date()) {
   return true;
 }
 
-// Mismo criterio que en schedule.repo.js: el driver se elige una sola vez.
+const RUTA_JSON = path.join(config.paths.data, 'banner.json');
+
+// Mismo criterio que en schedule.repo.js: el driver se elige una sola vez, y
+// con neon el archivo pasa a ser el espejo que lee el sitio.
 const store =
   config.storageDriver === 'neon'
-    ? createNeonBannerStore({ normalize: normalizeBanner })
+    ? createMirroredStore({
+        name: 'banner',
+        primary: createNeonBannerStore({ normalize: normalizeBanner }),
+        mirror: createJsonRepository({
+          filePath: RUTA_JSON,
+          defaults: DEFAULT_BANNER,
+          normalize: normalizeBanner,
+          seedOnMissing: false
+        })
+      })
     : createJsonRepository({
-        filePath: path.join(config.paths.data, 'banner.json'),
+        filePath: RUTA_JSON,
         defaults: DEFAULT_BANNER,
         normalize: normalizeBanner
       });
@@ -77,6 +90,11 @@ export const bannerRepository = {
       updatedAt: new Date().toISOString(),
       updatedBy: user?.email || 'desconocido'
     });
+  },
+
+  /** Ver scheduleRepository.hydrate(). */
+  hydrate() {
+    return store.hydrate ? store.hydrate() : Promise.resolve('json');
   }
 };
 

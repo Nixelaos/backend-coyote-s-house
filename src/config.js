@@ -55,7 +55,10 @@ const config = {
 
   paths: {
     root: ROOT_DIR,
-    data: path.join(ROOT_DIR, 'data'),
+    // Almacenamiento con el driver json; espejo de Neon con el driver neon.
+    // Se puede mover con DATA_DIR donde el disco del proyecto sea de solo
+    // lectura (en Vercel, /tmp).
+    data: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT_DIR, 'data'),
     adminPublic: path.join(ROOT_DIR, 'public', 'admin')
   },
 

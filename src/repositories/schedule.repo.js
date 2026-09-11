@@ -13,6 +13,7 @@ import config from '../config.js';
 import { DEFAULT_SCHEDULE } from '../lib/defaults.js';
 import { createJsonRepository } from './json-store.js';
 import { createNeonScheduleStore } from './neon-store.js';
+import { createMirroredStore } from './mirror-store.js';
 
 const DAY_KEYS = ['0', '1', '2', '3', '4', '5', '6'];
 
@@ -56,17 +57,36 @@ function normalizeSchedule(raw) {
   };
 }
 
+const RUTA_JSON = path.join(config.paths.data, 'schedule.json');
+
 /**
- * El driver se elige aquí y en ningún otro lado. Ambos stores exponen la misma
- * pareja { get, save }, así que el resto del archivo no cambia según cuál esté
- * activo. Si alguna vez hubo que tocar rutas o esquemas para migrar, el
- * adaptador no estaba respetando el contrato.
+ * El driver se elige aquí y en ningún otro lado:
+ *
+ *   json -> el archivo ES el almacenamiento (desarrollo local, sin Neon).
+ *   neon -> Neon es la fuente de verdad y el mismo archivo es un ESPEJO que se
+ *           reescribe en cada guardado y es lo único que lee el sitio público.
+ *           Así la lectura no depende de la red ni de que Neon esté despierta
+ *           (ver mirror-store.js).
+ *
+ * Los tres stores exponen la misma pareja { get, save }, así que el resto del
+ * archivo no cambia según cuál esté activo. Si alguna vez hubo que tocar rutas
+ * o esquemas para migrar, el adaptador no estaba respetando el contrato.
  */
 const store =
   config.storageDriver === 'neon'
-    ? createNeonScheduleStore({ normalize: normalizeSchedule })
+    ? createMirroredStore({
+        name: 'horario',
+        primary: createNeonScheduleStore({ normalize: normalizeSchedule }),
+        mirror: createJsonRepository({
+          filePath: RUTA_JSON,
+          defaults: DEFAULT_SCHEDULE,
+          normalize: normalizeSchedule,
+          // Si la copia falta hay que ir a Neon, no inventar un horario.
+          seedOnMissing: false
+        })
+      })
     : createJsonRepository({
-        filePath: path.join(config.paths.data, 'schedule.json'),
+        filePath: RUTA_JSON,
         defaults: DEFAULT_SCHEDULE,
         normalize: normalizeSchedule
       });
@@ -82,6 +102,14 @@ export const scheduleRepository = {
       updatedAt: new Date().toISOString(),
       updatedBy: user?.email || 'desconocido'
     });
+  },
+
+  /**
+   * Prepara el espejo antes de aceptar tráfico. Devuelve de dónde salió el
+   * dato ('espejo' o 'primario'); con el driver json no hay nada que preparar.
+   */
+  hydrate() {
+    return store.hydrate ? store.hydrate() : Promise.resolve('json');
   }
 };
 
