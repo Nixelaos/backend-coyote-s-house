@@ -288,10 +288,14 @@ Nuevo `src/routes/site.routes.js`. Para `GET /` y `GET /<pagina>.html`:
 
 ## 6. Pasos 3–8, lo esencial
 
-- **3 — CSP.** Helmet estricto queda para `/admin` y `/auth`. El sitio necesita como mínimo
-  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`, `font-src` con
-  `fonts.gstatic.com`, `img-src 'self' data:`. Hoy en producción el sitio **no tiene CSP** (lo
-  sirve nginx a secas), así que cualquier CSP razonable es una mejora, no una regresión.
+- **3 — CSP.** ⭐ **Plan detallado y ya investigado en [`paso-3-csp.md`](paso-3-csp.md)**: qué carga
+  el sitio archivo por archivo, la política completa, cómo la aplica helmet por ruta, las pruebas
+  y una decisión pendiente (dos manejadores `on*` en línea que la política bloquea). Leerlo en vez
+  de rehacer la investigación. En resumen: helmet estricto queda para `/admin` y `/auth`; el sitio
+  necesita `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`, `font-src` con
+  `fonts.gstatic.com`, `img-src 'self' data:` y `frame-src` con los dos orígenes del mapa. Hoy en
+  producción el sitio **no tiene CSP** (lo sirve nginx a secas), así que cualquier CSP razonable
+  es una mejora, no una regresión.
 - **4 — `site-config.js`.** Lee `document.getElementById('coyote-config')` de forma síncrona.
   Fuera `fetch`, `sessionStorage`, `CONFIG_POR_DEFECTO`, `API_BASE`. Si el bloque no existe
   (alguien abrió el HTML desde disco) → estado "sin horario": topbar y banner ocultos, sin
@@ -381,7 +385,8 @@ Nuevo `src/routes/site.routes.js`. Para `GET /` y `GET /<pagina>.html`:
 
 ## 10. Prompt sugerido para el chat nuevo
 
-> Lee `backend-coyote-s-house/fase-b.md` completo. Estamos en la fase B del proyecto Coyote's
-> House; los pasos 1 y 2 están hechos y commiteados. Verifica que `npm test` pasa en
-> `backend-coyote-s-house`. Después preséntame tu plan concreto para el **paso 3 (CSP del
-> sitio público)**, con lo que hereda de la sección 5, y espera mi OK antes de escribir código.
+> Lee `backend-coyote-s-house/fase-b.md` y `backend-coyote-s-house/paso-3-csp.md` completos.
+> Estamos en la fase B del proyecto Coyote's House; los pasos 1 y 2 están hechos. Verifica que
+> `npm test` pasa en `backend-coyote-s-house`. El paso 3 (CSP del sitio público) ya está
+> investigado y planificado en `paso-3-csp.md`: recuérdame la decisión pendiente de su sección 2
+> y espera mi respuesta antes de escribir código.
