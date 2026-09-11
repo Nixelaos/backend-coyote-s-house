@@ -129,11 +129,15 @@ esquema.
 npm test
 ```
 
+Las pruebas viven en el proyecto hermano `tests-backend-coyote-s-house/`, fuera de este
+repositorio: la suite de paridad compara este backend contra el sitio público, así que no
+pertenece del todo a ninguno de los dos. `npm test` desde aquí las invoca igual.
+
 Dos suites, sin dependencias de desarrollo:
 
-- **`test/api.test.mjs`** — control de acceso, validaciones y guardado, usando
+- **`api.test.mjs`** — control de acceso, validaciones y guardado, usando
   `fastify.inject` (sin abrir puertos). Restaura los datos al terminar.
-- **`test/paridad.test.mjs`** — compara `src/lib/schedule-status.js` (servidor) contra
+- **`paridad.test.mjs`** — compara `src/lib/schedule-status.js` (servidor) contra
   `coyote-s-house/js/lib/site-config.js` (navegador) barriendo una semana completa en pasos
   de 90 minutos sobre 10 horarios distintos: **1.280 comparaciones**.
 

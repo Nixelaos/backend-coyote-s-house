@@ -4,7 +4,7 @@ Continuación de [`plan.md`](plan.md), que dejó la migración a Neon lista y pr
 rama `dev`. Este documento cubre lo que falta para que don Alberto administre el horario
 desde Internet.
 
-Fecha: 2026-09-09.
+Fecha: 2026-09-09. Revisado contra el sitio en vivo, Neon y los repos: 2026-09-11.
 
 > **Corrección respecto de la primera versión de este plan.** La versión anterior sospechaba
 > que Netlify seguía sirviendo `coyoteshouse.cl` y construía la arquitectura sobre esa duda.
@@ -12,6 +12,20 @@ Fecha: 2026-09-09.
 > cambia tres decisiones de fondo —el origen único en vez de un subdominio, el riesgo de las
 > reseñas que ya no existe, y la capa de red que ya está probada— y todas están corregidas
 > abajo.
+
+> **Segunda corrección (2026-09-11).** Se verificó el estado real con `curl` al sitio vivo, el
+> MCP de Neon y el estado de los repos. Tres cosas cambian este plan:
+>
+> 1. **El backend no está desplegado en absoluto.** `/health`, `/admin/` y `/api/*` devuelven
+>    el 404 HTML de nginx: no existe ningún `location` hacia Fastify. Nada de la sección 5
+>    está hecho.
+> 2. **El clon del sitio en la VM está dos commits atrás** (en `8a5f346`, del 26/08). Los
+>    commits del 09/09 que agregan `site-config.js` y el banner no están en producción.
+> 3. **Se decidió cambiar la arquitectura del horario y el anuncio**: el hardcode del sitio
+>    desaparece, el HTML lo renderiza el backend desde un espejo JSON en disco, nginx guarda
+>    `proxy_cache` y Cloudflare cachea el HTML con purga al guardar. Las secciones que ese
+>    cambio deja obsoletas están marcadas con **⚠️ OBSOLETO** y se reescriben en la fase B
+>    (sección 9).
 
 ---
 
@@ -21,11 +35,14 @@ Fecha: 2026-09-09.
 |---|---|
 | Dominio | `coyoteshouse.cl`, DNS en Cloudflare (proxy activo) |
 | VM | Oracle Cloud, **ARM**, Oracle Linux, acceso por SSH, con Node y nginx |
-| Sitio público | **Servido por nginx desde la VM**, detrás de Cloudflare |
-| Reseñas de Google | JSON estático en la VM, refrescado por un script diario propio |
-| Backend | Solo corre en tu máquina, en `localhost:3000` |
-| Neon | Rama `production` **sin las tablas de la app**; rama `dev` con tablas y datos |
-| Repos | `github.com/Nixelaos/coyote-s-house` y `.../backend-coyote-s-house` |
+| Sitio público | **Servido por nginx desde la VM**, detrás de Cloudflare. El clon está en `8a5f346` (26/08), **dos commits atrás** de `origin/main` |
+| Reseñas de Google | JSON estático en la VM, refrescado por un script diario propio. Verificado 11/09: 200, 3254 bytes |
+| Backend | Solo corre en tu máquina, en `localhost:3000`. **En la VM no hay nada**: ni usuario, ni clon, ni env, ni unidad |
+| Neon | Rama `production` (`br-shiny-mouse-acxls5cn`) **sin las tablas de la app**; rama `dev` (`br-raspy-leaf-acxjfpas`) con las 4 tablas. Región `aws-sa-east-1`, PG 18, PITR de 6 h |
+| Cloudflare | SSL/TLS en modo **Full** (no strict). El HTML sale `cf-cache-status: DYNAMIC`; el CSS con `max-age=14400` |
+| nginx | **Sin** `set_real_ip_from`: las peticiones llegan con la IP de Cloudflare |
+| Google Cloud Console | Solo `http://localhost:3000/auth/google/callback`. Falta la URI de producción y el correo de Alberto |
+| Repos | `github.com/Nixelaos/coyote-s-house` (público) y `.../backend-coyote-s-house` (**privado**). Ambos al día con `origin/main` |
 
 ### Cómo se confirmó que el origen es la VM
 
@@ -64,6 +81,12 @@ cambiar durante la migración. **Las reseñas ya no son un riesgo de este despli
                                               Neon - production
                                               sa-east-1 (Sao Paulo)
 ```
+
+> **⚠️ Cambia en la fase B.** En el diseño acordado el 11/09, nginx también manda `/` y
+> `*.html` a Fastify (que renderiza el horario y el banner dentro del HTML), guarda una copia en
+> `proxy_cache` para seguir sirviéndola si Fastify cae, y Fastify lee el horario de un espejo
+> `data/*.json` que se escribe al guardar desde el panel. Neon queda solo en el camino de
+> escritura. El diagrama de arriba sigue valiendo tal cual para `/api`, `/auth` y `/admin`.
 
 ### Origen único, no subdominio
 
@@ -104,9 +127,12 @@ Cloud Console y rellenar el marcador de
 
 1. **Las reseñas no se van a ver.** El JSON vive en la VM y Vercel no lo tiene. El componente
    degrada solo a su tarjeta de respaldo y la página queda intacta. Es esperado.
-2. **El parpadeo del horario será peor que en producción**, no mejor. Ver la sección 8.2: la
-   caché en memoria no sobrevive entre invocaciones de una función, y el límite de
-   `@fastify/rate-limit` se multiplica por el número de instancias.
+2. ~~**El parpadeo del horario será peor que en producción**, no mejor.~~ **⚠️ Cambia en la
+   fase B:** el parpadeo desaparece del diseño (el horario viaja dentro del HTML), así que este
+   ensayo ya no lo mide. Lo que sí sigue siendo cierto: el límite de `@fastify/rate-limit` se
+   multiplica por el número de instancias, y **`proxy_cache` de nginx no existe en Vercel** —
+   la resiliencia a una caída de Fastify solo se prueba en la VM. El ensayo queda para una
+   sola cosa: confirmar el login de Google sobre HTTPS real.
 3. **Nada de nginx, SELinux, cortafuegos ni certificados** se ejercita aquí. Esa capa se
    estrena entera en la VM.
 
@@ -117,30 +143,63 @@ el ensayo termine, o dejarlos: no estorban.
 
 ## 4. Preparación antes de tocar la VM
 
-### 4.1 Subir lo que está sin subir
+### 4.1 Subir lo que está sin subir — ✅ hecho
 
-**Los dos repos tienen un commit local sin empujar**, y en el del backend ese commit es el
-adaptador de Neon: o sea, el corazón de todo esto. Si se clona en la VM antes de subirlo,
-allá llegaría código sin Neon.
+Verificado el 11/09: los dos repos están al día con `origin/main`. Lo único sin commit es el
+movimiento de las pruebas a `../tests-backend-coyote-s-house/` y el paso 4.4, que van juntos en
+el próximo commit.
+
+### 4.2 Resolver el acceso al repo privado — decidido: deploy key
+
+`github.com/Nixelaos/backend-coyote-s-house` responde 404 sin autenticación: es privado
+(verificado 11/09; el del sitio es público). Se resuelve con una **deploy key** SSH de solo
+lectura, propia del usuario `coyote`. Es la opción más limpia: no hay token que caduque ni que
+quede escrito en una URL dentro de `.git/config`, y si la VM se compromete se revoca esa llave
+sola, sin tocar tu cuenta.
+
+Como la llave pertenece al usuario del servicio, **estos comandos van justo después del
+`useradd` de 5.1 y antes del `git clone`**:
 
 ```bash
-cd backend-coyote-s-house && git push
-cd ../coyote-s-house && git push
+# 1. Llave para el usuario coyote (sin passphrase: la usa un proceso, no una persona)
+sudo mkdir -p /opt/coyote/.ssh
+sudo ssh-keygen -t ed25519 -N "" -C "deploy coyote-backend" -f /opt/coyote/.ssh/id_ed25519
+sudo chown -R coyote:coyote /opt/coyote/.ssh
+sudo chmod 700 /opt/coyote/.ssh
+sudo chmod 600 /opt/coyote/.ssh/id_ed25519
+
+# 2. Esto es lo que se pega en GitHub
+sudo cat /opt/coyote/.ssh/id_ed25519.pub
 ```
 
-### 4.2 Resolver el acceso al repo privado
+En GitHub: **repo `backend-coyote-s-house` → Settings → Deploy keys → Add deploy key**. Título
+`VM Oracle coyote`, pegar la llave pública, y dejar **"Allow write access" sin marcar**: la VM
+solo clona y hace `pull`.
 
-`github.com/Nixelaos/backend-coyote-s-house` responde 404 sin autenticación: es privado. El
-`git clone` de la sección 5.1 va a fallar pidiendo credenciales, sin terminal donde
-escribirlas. Hay que decidir antes una de tres: una **deploy key** SSH de solo lectura (lo
-más limpio; hay que crear `/opt/coyote/.ssh` para el usuario del servicio), un token en la
-URL de clonado, o hacer el repo público. Lo mismo aplica al `git pull` de actualización.
+```bash
+# 3. Registrar la huella de GitHub para que el primer clone no pida confirmación
+ssh-keyscan -t ed25519 github.com | sudo -u coyote tee -a /opt/coyote/.ssh/known_hosts
+
+# 4. Probar antes de clonar. Debe responder:
+#    "Hi Nixelaos/backend-coyote-s-house! You've successfully authenticated, but GitHub
+#     does not provide shell access."
+sudo -u coyote -H ssh -T git@github.com
+```
+
+Conviene comparar la huella que devuelve `ssh-keyscan` con las que GitHub publica en la página
+«GitHub's SSH key fingerprints» de docs.github.com antes de confiar en ella.
+
+La URL de clonado de 5.1 queda `git@github.com:Nixelaos/backend-coyote-s-house.git`, y el
+`git pull` de actualización (8.8) usa la misma llave sin configurar nada más, porque `-H` deja
+`HOME=/opt/coyote` y ssh la encuentra en su ruta por defecto.
 
 ### 4.3 Aplicar el esquema a Neon `production`
 
 Es el paso 4.7 que quedó pendiente en `plan.md`. Verificado el 2026-09-09: la rama
 `production` (`br-shiny-mouse-acxls5cn`) solo tiene el esquema `neon_auth`; las tablas de la
-aplicación no están. El `DATABASE_URL` del `.env` ya apunta a esa rama.
+aplicación no están. El `DATABASE_URL` del `.env` ya apunta a esa rama. **Vuelto a verificar
+el 11/09 por MCP: sigue igual.** La rama `dev` sí tiene `schedule_days`, `schedule_exceptions`,
+`banners` y `audit_log`.
 
 ```bash
 cd backend-coyote-s-house
@@ -151,18 +210,25 @@ npm run db:seed        # vuelca data/*.json
 Ninguno destruye nada: `production` está vacía y ambos se pueden repetir. La semilla se corre
 **desde tu máquina**, porque `data/*.json` está en `.gitignore` y no existe en la VM.
 
-### 4.4 Sacar `@neon/config` y `@neon/env` de las dependencias de producción
+Con el espejo de la fase B, en la VM esos archivos los genera el propio backend al arrancar,
+hidratándolos desde Neon: no hay que copiarlos a mano.
 
-`package.json` los declara en `dependencies`, pero **nada en `src/`, `test/` ni `migrations/`
-los importa** (verificado). Son herramientas del CLI de Neon. Arrastran `@neon/sdk`, `jiti`,
-`yargs`, `zod` y un módulo nativo (`@napi-rs/keyring`) que en la VM instalaría el binario ARM
-de un llavero que el backend no usa.
+### 4.4 Sacar `@neon/config` y `@neon/env` de las dependencias de producción — ✅ hecho
+
+`package.json` los declaraba en `dependencies`, pero **nada en `src/`, `migrations/` ni `api/`
+los importa** (verificado de nuevo el 11/09 con una guarda antes de desinstalar). Son
+herramientas del CLI de Neon. Arrastran `@neon/sdk`, `jiti`, `yargs`, `zod` y un módulo nativo
+(`@napi-rs/keyring`) que en la VM instalaría el binario ARM de un llavero que el backend no
+usa.
+
+Aplicado el 11/09: ahora viven en `devDependencies` (`@neon/config ^1.4.0`, `@neon/env ^1.3.0`
+— npm los subió de versión al reinstalarlos; son herramientas de desarrollo y las pruebas
+pasan igual). Queda:
 
 ```bash
-npm uninstall @neon/config @neon/env
-npm install --save-dev @neon/config @neon/env
-npm test
-git commit -am "mover herramientas del CLI de Neon a devDependencies" && git push
+git add -A
+git commit -m "mover tests a ../tests-backend-coyote-s-house y @neon/* a devDependencies"
+git push
 ```
 
 **El commit y el push no son opcionales:** sin ellos, el `npm ci --omit=dev` de la VM
@@ -193,6 +259,10 @@ Dos cosas, en *APIs y servicios*:
    listados como usuarios de prueba. Agrega ahí el de don Alberto, o publica la aplicación.
    Publicarla **no requiere verificación de Google** en este caso, porque los únicos permisos
    que pide son `openid`, `email` y `profile`, que no son sensibles.
+
+Verificado el 11/09: en Google Console solo existe la URI de `localhost`, y
+`ADMIN_ALLOWED_EMAILS` del `.env` local tiene un solo correo. Este es el único paso que
+**bloquea el login** aunque todo lo demás funcione.
 
 **Falta un dato que solo tú tienes: el correo de Google de Alberto.** Sin él no se puede
 cerrar ni este paso ni el `.env` de la sección 5.2, y sin eso recibe un 403 aunque el login
@@ -261,7 +331,9 @@ Notas:
   probando en tu máquina no comparta secreto con producción.
 - `ALLOWED_ORIGINS` **no hace falta**: hoy `config.js` la lee pero ningún módulo la consume.
   Con origen único, además, deja de tener sentido.
-- Con `STORAGE_DRIVER=neon`, la carpeta `data/` deja de usarse por completo.
+- ~~Con `STORAGE_DRIVER=neon`, la carpeta `data/` deja de usarse por completo.~~
+  **⚠️ OBSOLETO (11/09):** con el espejo de la fase B, `data/*.json` **vuelve a escribirse** en
+  cada guardado y es lo que lee el render público. Neon queda como fuente de verdad y respaldo.
 
 ### 5.3 Servicio de systemd
 
@@ -302,10 +374,10 @@ curl -s http://127.0.0.1:3000/health
 journalctl -u coyote-backend -f
 ```
 
-`ReadWritePaths` incluye `data/` aunque con Neon no se escriba: si algún día vuelves a
-`STORAGE_DRIVER=json` para depurar, `ProtectSystem=strict` se lo impediría y el error sería
-difícil de leer. La carpeta existe en el clon porque `data/.gitkeep` sí está rastreado — si
-no existiera, systemd se negaría a arrancar la unidad.
+`ReadWritePaths` incluye `data/` y **ahora es imprescindible**, no una precaución: el espejo
+JSON de la fase B se escribe ahí en cada guardado, y `ProtectSystem=strict` lo bloquearía con
+un `EROFS` difícil de leer. La carpeta existe en el clon porque `data/.gitkeep` sí está
+rastreado — si no existiera, systemd se negaría a arrancar la unidad.
 
 ### 5.4 SELinux — ahora es el tropiezo más probable de todo el plan
 
@@ -351,10 +423,35 @@ Y dentro del `server { listen 443 ... server_name coyoteshouse.cl; }` que ya exi
     location = /admin  { return 301 /admin/; }
 ```
 
-**Revisa si el `server` block ya trae `set_real_ip_from`.** Si no lo tiene, todas las
-peticiones llegan con la IP de Cloudflare y el limitador de `@fastify/rate-limit` las mete en
-un solo cubo: un abusivo dejaría a todos los demás con 429. Las listas están en
-`cloudflare.com/ips-v4` e `ips-v6`, y el cierre es `real_ip_header CF-Connecting-IP;`.
+**Confirmado el 11/09: el `server` block NO trae `set_real_ip_from`.** Hoy no importa porque
+nginx solo sirve archivos, pero en cuanto haya `proxy_pass` todas las peticiones llegan a
+Fastify con la IP de Cloudflare y el limitador de `@fastify/rate-limit` las mete en un solo
+cubo: un abusivo dejaría a todos los demás con 429.
+
+En vez de copiar los rangos a mano (cambian, y un error de tipeo es invisible), se genera el
+archivo desde las listas oficiales:
+
+```bash
+{ curl -fsS https://www.cloudflare.com/ips-v4; echo; curl -fsS https://www.cloudflare.com/ips-v6; echo; } \
+  | grep -v '^$' | sed 's/^/set_real_ip_from /; s/$/;/' \
+  | sudo tee /etc/nginx/conf.d/cloudflare-real-ip.inc >/dev/null
+echo 'real_ip_header CF-Connecting-IP;' | sudo tee -a /etc/nginx/conf.d/cloudflare-real-ip.inc >/dev/null
+cat /etc/nginx/conf.d/cloudflare-real-ip.inc   # ~22 líneas, ninguna vacía
+```
+
+Y dentro del `server` block, **antes** de los `location` del backend:
+
+```nginx
+    include /etc/nginx/conf.d/cloudflare-real-ip.inc;
+```
+
+Se comprueba en `journalctl -u coyote-backend`: si las peticiones muestran IPs `104.x`,
+`172.6x` o `162.15x`, el bloque no está surtiendo efecto. Repetir el generador una vez al año.
+
+> **⚠️ Se amplía en la fase B.** Los cuatro `location` de arriba cubren el panel y la API. Con
+> el diseño nuevo se suman `location = /` y `location ~ \.html$` hacia el backend, más
+> `proxy_cache_path` y `proxy_cache_use_stale` para que nginx siga sirviendo la última página
+> buena si Fastify cae. Ese bloque se escribe cuando el render en servidor exista.
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
@@ -366,9 +463,14 @@ Si `https://coyoteshouse.cl` responde hoy desde la VM, entonces **ya funciona** 
 certificado hacia Cloudflare, firewalld deja pasar 80/443, y la Security List de la VCN de
 Oracle tiene esos puertos abiertos. Toda esa capa está probada y no hay que tocarla.
 
-Vale confirmar una sola cosa en Cloudflare, **SSL/TLS → Overview**: que el modo sea
-**Full (strict)**. Con "Flexible" el tramo Cloudflare→VM viaja en claro y, peor, el backend
-recibiría `X-Forwarded-Proto: http` y la cookie `Secure` no viajaría.
+Confirmado el 11/09 en **SSL/TLS → Overview**: el modo es **Full**, no *Full (strict)*.
+**No bloquea el despliegue**: el tramo Cloudflare→VM va cifrado, y la cookie `Secure` viaja
+igual porque el `.inc` de 5.5 fuerza `X-Forwarded-Proto https` sin depender de lo que mande
+Cloudflare. Lo que "Full" no hace es validar el certificado de la VM. Subir a *strict* es
+endurecimiento opcional para el final, y depende de qué certificado tiene nginx: si es un
+**Origin CA** de Cloudflare o uno de Let's Encrypt, *strict* funciona sin más; si es
+autofirmado, *strict* rompe el sitio entero hasta cambiarlo. Con "Flexible" sí habría problema
+(el tramo iría en claro), pero no es el caso.
 
 ### 5.7 Cloudflare: las reglas de caché ahora son obligatorias
 
@@ -377,16 +479,32 @@ En **Caching → Cache Rules**, dos reglas en este orden:
 | Orden | Expresión | Acción |
 |---|---|---|
 | 1 | `starts_with(http.request.uri.path, "/api/") or starts_with(http.request.uri.path, "/auth") or starts_with(http.request.uri.path, "/admin")` | **Bypass cache** |
-| 2 | `http.request.uri.path eq "/api/public/site-config"` | **Eligible for cache**, respetar TTL del origen |
+| 2 | ~~`http.request.uri.path eq "/api/public/site-config"`~~ | ~~**Eligible for cache**~~ **⚠️ OBSOLETO** — ver abajo |
 
 **La primera dejó de ser prudencia y pasó a ser obligatoria.** Con origen único, las rutas
 del backend viven bajo el mismo nombre de host que un sitio estático que Cloudflare cachea
 con ganas. Cachear `/auth/*` rompería el parámetro `state` del login, y cachear
 `/api/admin/*` podría servirle a alguien la respuesta de la sesión de otro.
 
-La segunda es la que da el CDN: el endpoint público ya emite
+~~La segunda es la que da el CDN: el endpoint público ya emite
 `public, max-age=60, stale-while-revalidate=600`, pero Cloudflare **no cachea JSON por
-defecto**, así que sin la regla cada visita golpea la VM y despierta Neon.
+defecto**, así que sin la regla cada visita golpea la VM y despierta Neon.~~
+
+**⚠️ OBSOLETO (11/09).** El sitio ya no va a pedir `/api/public/site-config`: el horario y el
+banner llegan dentro del HTML. La regla 2 se reemplaza en la fase B por una que haga
+**elegible para caché el HTML de las páginas públicas** (Cloudflare no cachea HTML por
+defecto; verificado: `/` sale `cf-cache-status: DYNAMIC`), con un **TTL finito** —una hora o
+un día, nunca un año— y una **purga por URL** que dispara el backend al guardar desde el
+panel. El TTL finito es la red de seguridad: si la purga falla, el cambio aparece solo cuando
+vence, en vez de quedar pegado para siempre.
+
+Dos consecuencias que la regla 1 debe absorber antes de encender la 2:
+
+- El panel estático (`/admin/index.html`, `admin.js`) hoy sale con `Cache-Control: no-cache`
+  ([`server.js:88`](src/server.js#L88)), que significa "revalida", no "no guardes". Pasa a
+  `private, no-store` en la fase B. La API de `/api/admin/*` ya usa `no-store`.
+- Con `trustProxy` y sin `real_ip` (5.5), el rate-limit no puede distinguir visitantes. Va
+  primero.
 
 *Opcional:* una regla de **Rate limiting** sobre `/auth/google` (el plan gratuito permite
 una), para que nadie muela el login.
@@ -401,6 +519,12 @@ y **cualquier otro caso devuelve ruta relativa**, que es lo correcto con origen 
 producción no hay nada más que configurar.
 
 Como el sitio lo sirve la VM, el despliegue es un `git pull` en la carpeta que sirve nginx.
+
+**Verificado el 11/09: ese `pull` no se ha hecho.** El clon está en `8a5f346` (26/08) y
+`js/lib/site-config.js` devuelve 404 en vivo. **No hacerlo todavía**: desplegaría un
+`site-config.js` cuyo `fetch` a `/api/public/site-config` da 404 (el backend no existe), y que
+además la fase B reescribe —se le quita el `fetch`, el `sessionStorage` y
+`CONFIG_POR_DEFECTO`—. El `pull` se hace **una sola vez**, con la versión final, en la fase C.
 
 Ese mismo commit borra lo que quedaba de Netlify: `netlify.toml`, las dos funciones, la
 dependencia `@netlify/blobs` y una función muerta en `main.js` que eliminaba cualquier
@@ -432,13 +556,17 @@ Y a mano:
 1. Entrar a `https://coyoteshouse.cl/admin/`, iniciar sesión con Google.
 2. Cambiar el horario y guardar.
 3. Recargar `https://coyoteshouse.cl` **en una ventana de incógnito** → la barra de horario
-   refleja el cambio. En una pestaña ya abierta puede tardar hasta 5 minutos por la caché de
-   `sessionStorage`; en incógnito, hasta 60 s por la de Cloudflare.
+   refleja el cambio. ~~En una pestaña ya abierta puede tardar hasta 5 minutos por la caché de
+   `sessionStorage`; en incógnito, hasta 60 s por la de Cloudflare.~~ **⚠️ Cambia en la
+   fase B:** debe verse **de inmediato**, porque el guardado purga Cloudflare. Si tarda, la
+   purga falló y el panel tiene que haberlo avisado.
 4. `sudo systemctl restart coyote-backend` → el horario **persiste**. Es la prueba de que la
    migración a Neon sirvió para algo.
-5. `sudo systemctl stop coyote-backend` → el sitio sigue en pie con el horario de respaldo,
-   sin banner, con el diseño intacto y con las reseñas funcionando (las sirve nginx, no el
-   backend).
+5. `sudo systemctl stop coyote-backend` → ~~el sitio sigue en pie con el horario de respaldo,
+   sin banner, con el diseño intacto~~ **⚠️ Cambia en la fase B:** el sitio sigue en pie **con
+   el último horario y banner reales**, servidos por nginx desde `proxy_cache`, y con las
+   reseñas funcionando (las sirve nginx, no el backend). Si en vez de eso aparece un 502, falta
+   `proxy_cache_use_stale`.
 
 Comprobar desde tu máquina que la fila quedó escrita, con la cadena de `production`:
 
@@ -454,28 +582,27 @@ select entity, changed_by, changed_at from audit_log order by id desc limit 5;
 1. **~~Las reseñas de Google.~~** Resuelto antes de este plan: el JSON lo genera un script
    diario en la VM y lo sirve nginx. Ver sección 1.
 
-2. **El horario tarda ~440 ms en aparecer, y eso se nota.** Medido el 2026-09-09 contra la
-   rama `dev`: 1.95 s la primera petición con Neon suspendida, y **~440 ms sostenidos** con
-   Neon despierta. Durante ese tiempo el visitante ve el horario de respaldo antes de que
-   salte al real. Dos causas, las dos arreglables:
+2. ~~**El horario tarda ~440 ms en aparecer, y eso se nota.**~~ **⚠️ OBSOLETO (11/09).** La
+   medición sigue siendo cierta (1.95 s con Neon suspendida, ~440 ms con Neon despierta, contra
+   São Paulo), pero la solución cambió: en vez de cachear en memoria dentro de
+   `neon-store.js`, el render público **lee de un espejo `data/*.json` en disco** que el
+   backend escribe al guardar. Neon sale del camino de lectura por completo, y con él la
+   latencia, el arranque en frío y el `Promise.all`. Y al contrario de lo que decía este punto,
+   **el respaldo del sitio sí se borra** — ver el siguiente.
 
-   - [`neon-store.js`](src/repositories/neon-store.js) **no cachea nada en memoria**: cada
-     visita abre una consulta HTTP a São Paulo. Como el proceso de Node es el único que
-     escribe, invalidar una caché al guardar es exacto y trivial. Son unas veinte líneas y
-     bajan el endpoint a menos de 1 ms.
-   - [`public.routes.js:35-42`](src/routes/public.routes.js#L35-L42) hace las dos consultas
-     **en serie**. Un `Promise.all` corta el tiempo a la mitad por sí solo.
+   Lo que sigue siendo verdad es la premisa: nginx y Node son procesos distintos, y el que se
+   cae es Node — no por carga ni memoria (con 12 GB usa ~80 MB), sino **el día que se toca**:
+   un typo en `backend.env` hace que `validateConfig()` salga con 1 y `Restart=always` entre en
+   bucle cada 5 s sin rendirse nunca. Por eso la red de seguridad es `proxy_cache` de nginx, no
+   un hardcode.
 
-   **No se arregla borrando el respaldo del sitio.** Ese respaldo es lo que se ve cuando el
-   backend está caído — que es un modo de falla real: nginx y Node son procesos distintos, y
-   Neon está en otro país y se suspende sola.
-
-3. **El respaldo del sitio quedará desactualizado.** `CONFIG_POR_DEFECTO` en
-   [`site-config.js`](../coyote-s-house/js/lib/site-config.js) está congelado en
-   Lun-Vie 09:00-17:00. Cuando Alberto fije su horario definitivo, conviene copiarlo ahí para
-   que el día que algo falle el respaldo sea el correcto. Lo mismo con el bloque JSON-LD de
-   `index.html`: el JS lo corrige en el navegador, pero un rastreador que no ejecute
-   JavaScript lee el valor viejo.
+3. ~~**El respaldo del sitio quedará desactualizado.**~~ **⚠️ OBSOLETO (11/09).**
+   `CONFIG_POR_DEFECTO` **se elimina** en la fase B, no se mantiene. Razón: es la única capa
+   que puede mostrar información *incorrecta con confianza* (un "Abierto hasta 17:00" en plenas
+   vacaciones). Las capas que lo reemplazan —`proxy_cache` de nginx si Fastify cae, caché de
+   Cloudflare si la VM entera cae— sirven el **último dato real**. El JSON-LD de `index.html`
+   también deja de estar hardcodeado: lo renderiza el backend con el horario vigente, así que
+   un rastreador sin JavaScript lee el valor correcto.
 
 4. **Neon se apaga sola.** En el plan gratuito la base se suspende tras unos minutos sin uso.
    Con la regla 2 de caché el sitio público casi no lo nota; el panel sí, la primera vez que
@@ -484,14 +611,18 @@ select entity, changed_by, changed_at from audit_log order by id desc limit 5;
 
 5. **Latencia.** Neon está en `sa-east-1` (São Paulo). Si la VM de Oracle está en Chile o
    Brasil, son decenas de milisegundos. Si quedó en otro continente, cada carga del panel lo
-   va a notar. La caché del punto 2 lo vuelve casi irrelevante.
+   va a notar. Con el espejo en disco de la fase B, esa latencia la paga **solo el panel al
+   guardar**, nunca un visitante del sitio.
 
 6. **La API key de Neon del `plan.md`.** Sigue pendiente: `neon mcp -y` acuñó una llave con
    alcance total sobre la cuenta y la escribió en seis archivos de configuración de tu
    equipo. Revocarla con `neon api-keys revoke 3324682` y emitir una acotada al proyecto.
 
-7. **Respaldos.** Neon guarda historial para restauración puntual, pero conviene dejar un
-   snapshot explícito antes de cada cambio grande de esquema: `neon snapshot create`.
+7. **Respaldos.** Neon guarda historial para restauración puntual, pero **solo 6 horas**
+   (`history_retention_seconds: 21600`, verificado 11/09): un guardado malo un viernes no se
+   recupera el lunes. Conviene dejar un snapshot explícito antes de cada cambio grande de
+   esquema (`neon snapshot create`) y, con el espejo de la fase B, considerar versionar
+   `data/*.json` en algún lado como respaldo de más profundidad.
 
 8. **Actualizar el backend** una vez desplegado:
 
@@ -504,34 +635,44 @@ select entity, changed_by, changed_at from audit_log order by id desc limit 5;
 
 ---
 
-## 9. Orden sugerido
+## 9. Orden sugerido (revisado 11/09)
+
+Como no hay nada del backend en producción, no hay migración en caliente que cuidar: la VM se
+toca **una sola vez**, con el diseño final. Tres fases.
 
 ```
-4.1 push de los dos repos  -->  4.2 acceso al repo privado
-        |
-4.3 esquema en Neon production
-        |
-4.4 limpiar dependencias (+ commit y push)  -->  4.5 Node en la VM
-        |
-4.6 Google Cloud Console   <-- necesita el correo de Alberto
-        |
+A. Preparacion, desde tu maquina, independiente del diseño
+   4.1 push                                 [hecho]
+   4.4 @neon/* a devDependencies            [hecho]  -->  commit junto al movimiento de tests
+   4.3 db:migrate + db:seed en production   [pendiente: escribe en produccion, va con tu OK]
+   4.6 Google Console + correo de Alberto   [pendiente: bloquea el login]
+           |
+B. Cambios de diseño (decision del 11/09)
+   espejo JSON: guardar en Neon --> escribir data/*.json; el render lee del disco
+   render en servidor: banner, resumen, JSON-LD y datos dentro del HTML de las 9 paginas
+   site-config.js: quitar fetch, sessionStorage y CONFIG_POR_DEFECTO
+   fallar con 5xx si el espejo no se puede leer (no envenenar la cache)
+   /admin estatico --> private, no-store
+   purga de Cloudflare al guardar (best-effort, TTL finito, aviso en el panel)
+   reescribir 5.5 (proxy_cache) y 5.7 (cachear HTML) de este documento
+   npm test
+           |
 [opcional]  3. ensayo en Vercel: confirmar que el login funciona sobre HTTPS
-        |
-5.1 usuario y codigo  -->  5.2 .env  -->  5.3 systemd
-        |
-        curl http://127.0.0.1:3000/health   desde la VM
-        |
-5.4 SELinux  -->  5.5 nginx  -->  recargar
-        |
-        curl https://coyoteshouse.cl/health   desde fuera
-        |
-5.6 confirmar Full (strict)  -->  5.7 reglas de cache
-        |
-6. git pull del sitio en la VM
-        |
-7. verificacion + probar el login de Alberto
+           |
+C. La VM, una sola vez
+   5.1 usuario  -->  4.2 deploy key  -->  clone  -->  npm ci --omit=dev
+   5.2 .env  -->  5.3 systemd
+           curl http://127.0.0.1:3000/health   desde la VM
+   5.4 SELinux
+   5.5 nginx: real_ip  -->  proxy  -->  proxy_cache  -->  nginx -t  -->  reload
+           curl https://coyoteshouse.cl/health   desde fuera
+   5.7 Cache Rules: bypass admin/auth/api, despues cachear HTML
+   6.  git pull del sitio en la VM
+   7.  verificacion + login de Alberto
+   5.6 [opcional] subir Cloudflare a Full (strict) si el certificado lo permite
 ```
 
-A diferencia de la versión anterior, el cortafuegos ya no aparece como paso: está resuelto
-desde antes. El paso frágil ahora es 5.4, y va **antes** de tocar nginx precisamente para que
-un 502 no te haga dudar entre tres causas distintas.
+El paso frágil sigue siendo 5.4, y sigue yendo **antes** de tocar nginx para que un 502 no te
+haga dudar entre tres causas. Lo que cambió de orden: 4.2 se movió dentro de C porque la deploy
+key pertenece al usuario `coyote`, que se crea en 5.1; y 6 pasó al final porque el sitio actual
+en la VM no debe recibir un `site-config.js` que va a ser reescrito.

@@ -1,5 +1,4 @@
 # El ensayo en Vercel solo necesita el servidor y el panel.
-test/
 migrations/
 data/
 plan.md
