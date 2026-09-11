@@ -1,7 +1,8 @@
-# Fase B — handoff para continuar con el paso 2
+# Fase B — handoff para continuar con el paso 3
 
 Continuación de [`despliegue.md`](despliegue.md) (sección 9, fase B). Escrito el 2026-09-11 al
-cerrar el paso 1, para que una sesión nueva arranque el paso 2 sin reconstruir contexto.
+cerrar el paso 1 y actualizado el mismo día al cerrar el paso 2, para que una sesión nueva
+arranque el paso 3 sin reconstruir contexto.
 
 **Léelo entero antes de tocar código.** La sección 10 tiene el prompt para abrir el chat.
 
@@ -49,23 +50,53 @@ secciones marcadas ⚠️).
   - Verificado con humo real: arranque con `neon` + `DATA_DIR` a una carpeta temporal →
     `origen: primario` en ambos recursos, `GET /api/public/site-config` 200 con 7 días, segunda
     lectura desde disco. Solo lecturas contra producción.
+  - Commiteado: `289ae0e` (código) y `fd5ffb5` (docs).
+- **Paso 2 de la fase B — render de HTML** (2026-09-11):
+  - `src/routes/site.routes.js` (nuevo): `GET /` y `GET /<pagina>.html` para las 9 páginas (10
+    rutas explícitas, `helmet: false` por ruta hasta el paso 3). Lee el archivo de `SITE_ROOT`,
+    inyecta el bloque `<script type="application/json" id="coyote-config">` antes de `</head>`,
+    reescribe el JSON-LD de `index.html` y responde `public, max-age=0, s-maxage=3600`. Espejo
+    ilegible → **503** con HTML mínimo, `no-store` y `Retry-After: 30`. Repositorios y carpeta
+    inyectables por opciones (así se prueba el 503 sin tocar disco).
+  - `src/lib/site-pages.js` (nuevo): lista cerrada de páginas, carpetas de estáticos,
+    `isPublicSitePath()`. **La reutiliza el paso 6** para armar las URLs de la purga.
+  - `src/lib/public-config.js` (nuevo): `buildPublicConfig(schedule, banner)`, un solo JSON para
+    el HTML y para `/api/public/site-config`.
+  - `src/lib/site-render.js` (nuevo, puro): inyección del bloque, reescritura del JSON-LD y
+    escapado del JSON embebido (`<` y U+2028/U+2029 como secuencias JSON, para que un mensaje
+    de banner no pueda cerrar el `</script>`).
+  - `public.routes.js`: usa `buildPublicConfig` + `status`; ya no evalúa la ventana del banner.
+  - `server.js`: fuera el redirect de `/` a `/admin/`; `siteRoutes` + segunda instancia de
+    `@fastify/static` (`allowedPath` solo `css/ js/ assets/ fonts/`), ambos solo si
+    `status.hasSite`.
+  - `config.js`: `SITE_ROOT` → `paths.site`; `validateConfig()` devuelve `hasSite`.
+  - `security.js`: el `allowList` del rate limit cubre páginas y estáticos.
+  - `banner.repo.js`: solo cambió el comentario de `resolveBannerVisibility()` (queda como
+    implementación de referencia para la paridad del paso 4).
+  - `api.test.mjs`: 23 → 51 pruebas (sección "Sitio público" y "espejo ilegible").
+  - README, `.env.example`, `despliegue.md` 5.2 (`SITE_ROOT`) actualizados.
+  - Verificado con `fastify.inject` y con HTTP real en local, driver json: páginas 200 con
+    bloque y JSON-LD reescrito, 404 JSON fuera de la lista, `/../package.json` 404, estáticos
+    200, `/admin` sigue redirigiendo, sin cabecera CSP en las páginas. **Queda pendiente la
+    comprobación en navegador** (ver §3).
 
-### Sin commit (hay que commitear ANTES de empezar el paso 2)
+### Sin commit (el usuario commitea)
 
-Backend (`ahead 2` de origin, sin push): `.env.example`, `README.md`, `despliegue.md`,
-`package.json`, `src/config.js`, `src/server.js`, `src/repositories/{banner.repo,json-store,
-schedule.repo}.js`, `.vercelignore`, y nuevos `src/repositories/mirror-store.js` y `fase-b.md`.
+Backend: `.env.example`, `README.md`, `despliegue.md`, `fase-b.md`, `src/config.js`,
+`src/server.js`, `src/plugins/security.js`, `src/routes/public.routes.js`,
+`src/repositories/banner.repo.js`, y nuevos `src/lib/site-pages.js`, `src/lib/public-config.js`,
+`src/lib/site-render.js`, `src/routes/site.routes.js`.
 
-Tests (sincronizado con origin): `package.json` modificado y `mirror.test.mjs` nuevo.
+Tests: `api.test.mjs`.
+
+Mensajes sugeridos:
 
 ```bash
 cd backend-coyote-s-house
-git add -A
-git commit -m "feat: espejo JSON en disco delante de Neon (fase B, paso 1)"
+git commit -am "feat: servir el sitio con horario y banner dentro del HTML (fase B, paso 2)"   # + git add de los nuevos
 
 cd ../tests-backend-coyote-s-house
-git add -A
-git commit -m "test: suite del espejo JSON (mirror-store)"
+git commit -am "test: render del sitio público (bloque, JSON-LD, 404, 503)"
 ```
 
 Los avisos `LF will be replaced by CRLF` son de `core.autocrlf` en Windows; ignorarlos.
@@ -82,7 +113,7 @@ Los avisos `LF will be replaced by CRLF` son de `core.autocrlf` en Windows; igno
 
 ```bash
 cd backend-coyote-s-house
-npm test        # debe dar: 29 OK / 23 OK / 1280 comparaciones, 0 fallas
+npm test        # debe dar: 29 OK / 51 OK / 1280 comparaciones, 0 fallas
 git status      # limpio si ya se commiteó lo de la sección 2
 ```
 
@@ -90,6 +121,17 @@ git status      # limpio si ya se commiteó lo de la sección 2
 correr `npm test` desde esa carpeta. No hay framework: cada suite usa un `check(nombre,
 condicion, extra)` propio y termina con `N pruebas OK, M fallidas` + `process.exit`. Mantener
 ese formato.
+
+**Comprobación en navegador pendiente del paso 2** (no se pudo hacer desde el chat):
+
+```bash
+STORAGE_DRIVER=json npm run dev      # y abrir http://localhost:3000/
+```
+
+Debe verse el sitio completo (CSS, fuentes, componentes) sin errores de CSP en la consola, y
+"ver código fuente" debe mostrar el bloque `coyote-config` justo antes de `</head>`. Ojo: el
+`site-config.js` actual sigue haciendo `fetch` a `/api/public/site-config`, así que hasta el
+paso 4 el topbar toma el horario de la API y no del bloque. Es lo esperado.
 
 ---
 
@@ -116,8 +158,8 @@ Los ocho pasos (tabla completa en `despliegue.md` §9):
 | # | Paso | Estado |
 |---|---|---|
 | 1 | Espejo JSON | ✅ |
-| 2 | Render de HTML: `site.routes.js` + `SITE_ROOT` | **siguiente** |
-| 3 | CSP distinta para el sitio público | |
+| 2 | Render de HTML: `site.routes.js` + `SITE_ROOT` | ✅ |
+| 3 | CSP distinta para el sitio público | **siguiente** |
 | 4 | `site-config.js` sin `fetch`, `sessionStorage` ni `CONFIG_POR_DEFECTO` | |
 | 5 | `/admin` estático → `private, no-store` | |
 | 6 | Purga de Cloudflare al guardar | |
@@ -129,7 +171,39 @@ siguiente solo con su aprobación.
 
 ---
 
-## 5. Paso 2 en detalle — render de HTML
+## 5. Paso 2 (hecho) — decisiones tomadas y lo que heredan los pasos 3 y 4
+
+### Decisiones cerradas el 11/09 con el usuario
+
+- **Banner con `startsAt`/`endsAt`: decide el navegador, TTL fijo (opción B).** El bloque y la
+  API llevan el banner guardado con sus fechas; `enabled` significa "interruptor encendido y
+  mensaje no vacío". La ventana **no** se evalúa en el servidor. Razón: la misma copia cacheada
+  tiene que ser correcta antes, durante y después de la vigencia, igual que el HTML lleva el
+  horario y no el estado abierto/cerrado. Descartadas: TTL dinámico hasta la próxima
+  transición (A) y "ambas" (C: una vez que el cliente evalúa, el TTL dinámico no aporta nada).
+  Límites de purga de Cloudflare verificados en su documentación: purga por URL disponible en
+  el plan Free, 100 URLs por petición, 800 URLs por segundo, 1.200 llamadas a la API cada 5
+  minutos. Una persona guardando desde el panel no se acerca.
+  **Hereda el paso 4:** `site-config.js` porta `resolveBannerVisibility()` de `banner.repo.js`
+  (que queda como implementación de referencia); `getBanner()` devuelve la vista ya resuelta
+  para que `announcement-banner.js` no cambie; y se vuelve a disparar `siteconfig:ready` con un
+  `setTimeout` a la próxima transición, para que una pestaña abierta cambie sola.
+  `paridad.test.mjs` compara las dos implementaciones, como hace con `calcularEstado()`.
+- **`/api/public/site-config` devuelve el mismo JSON que el bloque, más `status`.** Una sola
+  función `buildPublicConfig()`. Cambió la prueba "un banner que aún no empieza no se publica":
+  ahora comprueba que viaja con sus fechas.
+- **CSP:** las rutas del sitio llevan `helmet: false` (opción de ruta de `@fastify/helmet`,
+  la lee un hook `onRoute`). **El paso 3 reemplaza ese `false`** en `site.routes.js` por un
+  objeto con la CSP del sitio; el resto de helmet sigue global.
+- **Punto de inyección: justo antes de `</head>`**, después del JSON-LD. El paso 4 debe cargar
+  `site-config.js` sin `defer` **después** del bloque: como primer `<script>` del `<body>`, o
+  al final del `<head>`.
+- `SITE_ROOT` ausente: error de arranque si la variable está definida y la carpeta no existe;
+  aviso (y sin sitio) si falta el default `../coyote-s-house`, que es el caso de Vercel.
+- `/../package.json` responde 404: `@fastify/static` rechaza rutas no canónicas antes de
+  consultar `allowedPath`, y `fastify.inject` normaliza la URL. La prueba acepta 403 o 404.
+
+Lo que sigue es el diseño previo al paso, conservado como registro de por qué se hizo así.
 
 ### Qué hace
 
@@ -156,7 +230,7 @@ Nuevo `src/routes/site.routes.js`. Para `GET /` y `GET /<pagina>.html`:
    `DEFAULT_SCHEDULE` envenenaría la caché con datos inventados; un 503 hace que
    `proxy_cache_use_stale` sirva la última página buena.
 
-### Detalles que hay que resolver en el paso 2
+### Detalles que había que resolver (todos resueltos; ver las decisiones de arriba)
 
 - **Lista cerrada de páginas.** Solo las 9 que existen: `index`, `caso-ajuste-motor`,
   `contacto`, `cotizador`, `faq`, `galeria`, `resenas`, `servicios`, `sobre-alberto`. Nada de
@@ -177,12 +251,14 @@ Nuevo `src/routes/site.routes.js`. Para `GET /` y `GET /<pagina>.html`:
 - **El banner con `startsAt`/`endsAt` es un problema real con caché.** Hoy la vigencia se
   evalúa en el servidor. Si el HTML está cacheado 1 h y el banner empieza a las 10:00, aparece
   hasta las 11:00. La purga al guardar no ayuda: la transición no dispara ningún guardado.
-  Recomendación (decidir con el usuario, no asumir):
+  Recomendación original (decidir con el usuario, no asumir):
   - calcular `s-maxage` dinámico = `min(3600, segundos hasta la próxima transición del
     banner)`, para que la caché venza exactamente cuando cambia; y además
   - mandar `startsAt`/`endsAt` en el bloque y que el cliente también evalúe la ventana. El
     comentario en `banner.repo.js` que justifica evaluar solo en servidor (reloj del visitante
     mal puesto) pesa poco frente a una marquesina.
+
+  **Resuelto: solo lo segundo (opción B).** Ver "Decisiones cerradas" arriba.
 - **CSP.** `index.html` tiene `style="..."` inline y `security.js` registra helmet global con
   `styleSrc` sin `'unsafe-inline'`: servido por Fastify, **el sitio se rompe**. Es el paso 3,
   pero el 2 no se puede probar en el navegador sin resolverlo. Mínimo viable en el paso 2:
@@ -196,7 +272,7 @@ Nuevo `src/routes/site.routes.js`. Para `GET /` y `GET /<pagina>.html`:
   No está documentada; se averigua con `grep -rn "root " /etc/nginx/` en la VM. Va en
   `despliegue.md` 5.2 cuando se sepa.
 
-### Pruebas del paso 2 (extender `api.test.mjs`)
+### Pruebas del paso 2 (hechas: 28 nuevas en `api.test.mjs`)
 
 - `GET /` → 200, `content-type: text/html`, contiene `id="coyote-config"`, el JSON parsea y
   tiene `schedule.days` con 7 claves y `banner`.
@@ -306,7 +382,6 @@ Nuevo `src/routes/site.routes.js`. Para `GET /` y `GET /<pagina>.html`:
 ## 10. Prompt sugerido para el chat nuevo
 
 > Lee `backend-coyote-s-house/fase-b.md` completo. Estamos en la fase B del proyecto Coyote's
-> House; el paso 1 está hecho y commiteado. Verifica que `npm test` pasa en
-> `backend-coyote-s-house`. Después preséntame tu plan concreto para el **paso 2 (render de
-> HTML)** con las decisiones abiertas de la sección 5 — en especial la del banner con
-> `startsAt`/`endsAt` bajo caché — y espera mi OK antes de escribir código.
+> House; los pasos 1 y 2 están hechos y commiteados. Verifica que `npm test` pasa en
+> `backend-coyote-s-house`. Después preséntame tu plan concreto para el **paso 3 (CSP del
+> sitio público)**, con lo que hereda de la sección 5, y espera mi OK antes de escribir código.

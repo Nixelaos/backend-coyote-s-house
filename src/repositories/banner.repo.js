@@ -35,9 +35,13 @@ function normalizeBanner(raw) {
 /**
  * Decide si el banner debe mostrarse AHORA.
  *
- * La ventana de vigencia se evalúa en el servidor y no en el navegador: si se
- * dejara al cliente, un reloj mal configurado mostraría una promoción vencida.
- * Además el mensaje vacío nunca se publica, aunque el interruptor esté activo.
+ * Desde la fase B esta decisión la toma el navegador: el HTML viaja con
+ * startsAt/endsAt y puede llevar una hora en caché, así que un "visible: sí"
+ * calculado aquí quedaría viejo en cuanto empezara o terminara la vigencia
+ * (ver lib/public-config.js). Esta función queda como implementación de
+ * referencia: el paso 4 la porta a site-config.js y la prueba de paridad
+ * compara las dos, igual que con el cálculo de abierto/cerrado.
+ * El mensaje vacío nunca se publica, aunque el interruptor esté activo.
  */
 export function resolveBannerVisibility(banner, reference = new Date()) {
   if (!banner.enabled || !banner.message) return false;

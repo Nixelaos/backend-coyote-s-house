@@ -6,12 +6,19 @@
 
 import { config as loadDotenv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 import path from 'node:path';
 
 loadDotenv();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
+
+// Carpeta con el sitio público (los .html, css/, js/, assets/, fonts/). En
+// desarrollo es el repo hermano; en la VM, el docroot que sirve nginx. Se
+// recuerda si vino de la variable para que validateConfig() distinga un
+// SITE_ROOT mal escrito (error) de un entorno sin sitio, como Vercel (aviso).
+const siteRootFromEnv = process.env.SITE_ROOT ? path.resolve(process.env.SITE_ROOT) : '';
 
 /** Convierte "a@x.com, b@y.com" en ['a@x.com', 'b@y.com'] sin vacíos ni espacios. */
 function parseList(value) {
@@ -59,7 +66,8 @@ const config = {
     // Se puede mover con DATA_DIR donde el disco del proyecto sea de solo
     // lectura (en Vercel, /tmp).
     data: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT_DIR, 'data'),
-    adminPublic: path.join(ROOT_DIR, 'public', 'admin')
+    adminPublic: path.join(ROOT_DIR, 'public', 'admin'),
+    site: siteRootFromEnv || path.resolve(ROOT_DIR, '..', 'coyote-s-house')
   },
 
   timezone: 'America/Santiago'
@@ -106,7 +114,23 @@ export function validateConfig() {
     errors.push('STORAGE_DRIVER=neon requiere DATABASE_URL.');
   }
 
-  return { errors, warnings, hasGoogleCredentials };
+  // Sin sitio no hay páginas que servir, pero el panel y la API siguen
+  // funcionando. Solo es un error si alguien apuntó SITE_ROOT a una carpeta
+  // que no existe: eso es un typo en la VM, no un entorno sin sitio.
+  const hasSite = fs.existsSync(config.paths.site);
+
+  if (!hasSite) {
+    if (siteRootFromEnv) {
+      errors.push(`SITE_ROOT apunta a ${config.paths.site}, que no existe.`);
+    } else {
+      warnings.push(
+        `No se encontró el sitio público en ${config.paths.site}; las páginas del sitio no se servirán. ` +
+          'Define SITE_ROOT si está en otra carpeta.'
+      );
+    }
+  }
+
+  return { errors, warnings, hasGoogleCredentials, hasSite };
 }
 
 export default config;

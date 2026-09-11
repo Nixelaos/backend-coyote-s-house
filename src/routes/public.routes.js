@@ -1,18 +1,25 @@
 /**
- * API pública de solo lectura que consume el sitio de Coyote's House.
+ * API pública de solo lectura.
  *
- * Principio de diseño: esta ruta NUNCA debe fallar de forma que rompa el sitio.
- * Si el archivo de datos está corrupto o ilegible, se responde 200 con los
- * valores por defecto y se registra el problema, en lugar de devolver un 500
- * que dejaría la barra de horario en blanco frente a los clientes.
+ * Desde la fase B el sitio ya no la consulta: el horario y el banner viajan
+ * dentro del HTML (routes/site.routes.js). Se conserva porque devuelve
+ * EXACTAMENTE el mismo JSON que va embebido en las páginas, más el estado
+ * resuelto, así que es la forma más rápida de ver qué está publicando el
+ * backend sin abrir el código fuente de una página.
+ *
+ * Principio de diseño: esta ruta NUNCA falla. Si el archivo de datos está
+ * corrupto o ilegible, se responde 200 con los valores por defecto y se
+ * registra el problema. Aquí eso es aceptable porque Cloudflare no cachea
+ * /api (regla 1 de despliegue.md 5.7); en las páginas, con caché delante, la
+ * misma falla responde 503 para no envenenarla.
  */
 
 import cors from '@fastify/cors';
-import { scheduleRepository } from '../repositories/schedule.repo.js';
-import { bannerRepository, resolveBannerVisibility } from '../repositories/banner.repo.js';
+import { scheduleRepository, normalizeSchedule } from '../repositories/schedule.repo.js';
+import { bannerRepository, normalizeBanner } from '../repositories/banner.repo.js';
 import { computeStatus } from '../lib/schedule-status.js';
 import { DEFAULT_SCHEDULE, DEFAULT_BANNER } from '../lib/defaults.js';
-import { normalizeSchedule } from '../repositories/schedule.repo.js';
+import { buildPublicConfig } from '../lib/public-config.js';
 
 const CACHE_CONTROL = 'public, max-age=60, stale-while-revalidate=600';
 
@@ -42,34 +49,16 @@ export default async function publicRoutes(fastify) {
       banner = await bannerRepository.get();
     } catch (error) {
       request.log.error({ err: error }, 'No se pudo leer el banner; se omite');
-      banner = { ...DEFAULT_BANNER };
+      banner = normalizeBanner(DEFAULT_BANNER);
     }
-
-    const status = computeStatus(schedule);
-    const isBannerVisible = resolveBannerVisibility(banner);
 
     reply.header('Cache-Control', CACHE_CONTROL);
 
     return {
-      // Se entrega el horario completo para que el navegador recalcule el
-      // estado cada minuto sin volver a pedir nada, y además el estado ya
-      // resuelto para pintar la primera vez sin parpadeo.
-      schedule: {
-        timezone: schedule.timezone,
-        days: schedule.days,
-        exceptions: schedule.exceptions
-      },
-      banner: isBannerVisible
-        ? {
-            enabled: true,
-            message: banner.message,
-            linkUrl: banner.linkUrl,
-            speed: banner.speed
-          }
-        : { enabled: false, message: '', linkUrl: '', speed: banner.speed },
-      status,
-      // updatedBy queda fuera a propósito: es un correo y esto es público.
-      updatedAt: schedule.updatedAt
+      ...buildPublicConfig(schedule, banner),
+      // El estado resuelto es solo para depurar desde el navegador: el sitio
+      // lo recalcula con su propio reloj y nunca lo lee de aquí.
+      status: computeStatus(schedule)
     };
   });
 

@@ -13,8 +13,10 @@ import authPlugin from './plugins/auth.js';
 import publicRoutes from './routes/public.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import siteRoutes from './routes/site.routes.js';
 import { scheduleRepository } from './repositories/schedule.repo.js';
 import { bannerRepository } from './repositories/banner.repo.js';
+import { isSiteAssetPath } from './lib/site-pages.js';
 
 /**
  * Traduce un error de JSON Schema a algo que una persona pueda entender.
@@ -117,7 +119,25 @@ export async function buildServer() {
   });
 
   fastify.get('/admin', async (request, reply) => reply.redirect('/admin/'));
-  fastify.get('/', async (request, reply) => reply.redirect('/admin/'));
+
+  // Sitio público: las 9 páginas con el horario y el banner dentro del HTML,
+  // más sus estáticos para que localhost:3000 se vea completo sin nginx. En
+  // la VM nginx sirve css/, js/, assets/ y fonts/ antes de llegar aquí, así
+  // que la segunda parte no estorba. Sin sitio (Vercel) no se registra nada
+  // y "/" cae al 404 general; validateConfig() ya avisó.
+  if (status.hasSite) {
+    await fastify.register(siteRoutes);
+    await fastify.register(fastifyStatic, {
+      root: config.paths.site,
+      prefix: '/',
+      index: false,
+      // Los decoradores de reply (sendFile...) ya los puso la instancia del panel.
+      decorateReply: false,
+      // Solo las carpetas de recursos: ni los .html crudos (los sirve
+      // site.routes.js con los datos), ni package.json ni nada más de la raíz.
+      allowedPath: (pathname) => isSiteAssetPath(pathname)
+    });
+  }
 
   fastify.setNotFoundHandler(async (request, reply) => {
     return reply.code(404).send({

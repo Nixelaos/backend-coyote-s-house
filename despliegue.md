@@ -329,9 +329,19 @@ ADMIN_ALLOWED_EMAILS=nnicolaslf@gmail.com
 
 STORAGE_DRIVER=neon
 DATABASE_URL=<cadena de la rama production>
+
+# Carpeta que hoy sirve nginx (los .html del sitio). Averiguarla en la VM con:
+#   grep -rn "root " /etc/nginx/
+SITE_ROOT=<docroot de nginx>
 ```
 
 Notas:
+
+- **`SITE_ROOT` (fase B, paso 2).** Sin ella Fastify busca `../coyote-s-house` junto al repo del
+  backend, que en la VM no existe, y las páginas darían 404. Si la variable apunta a una carpeta
+  inexistente el servicio **no arranca**, a propósito: un typo aquí se nota en el primer
+  `systemctl status`. El usuario `coyote` necesita permiso de lectura sobre esa carpeta (con
+  `ProtectSystem=strict` leer está permitido; escribir no, y no hace falta).
 
 - **`NODE_ENV=production` no es decorativo.** Activa la cookie `Secure`, HSTS y `trustProxy`
   en [`server.js:58`](src/server.js#L58). Sin eso el login no funciona sobre HTTPS.
