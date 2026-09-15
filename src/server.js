@@ -13,10 +13,6 @@ import authPlugin from './plugins/auth.js';
 import publicRoutes from './routes/public.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import adminRoutes from './routes/admin.routes.js';
-import siteRoutes from './routes/site.routes.js';
-import { scheduleRepository } from './repositories/schedule.repo.js';
-import { bannerRepository } from './repositories/banner.repo.js';
-import { isSiteAssetPath } from './lib/site-pages.js';
 
 /**
  * Traduce un error de JSON Schema a algo que una persona pueda entender.
@@ -59,7 +55,7 @@ export async function buildServer() {
         }
       }
     },
-    trustProxy: config.isProduction, // Render/Railway/Fly ponen un proxy delante.
+    trustProxy: config.isProduction, // En la VM, nginx va delante.
     bodyLimit: 64 * 1024
   });
 
@@ -76,31 +72,6 @@ export async function buildServer() {
   await fastify.register(publicRoutes);
   await fastify.register(authRoutes);
   await fastify.register(adminRoutes);
-
-  // Con el driver neon, el sitio lee de un espejo JSON en disco. Se prepara
-  // antes de aceptar tráfico para que la primera visita no pague el viaje a
-  // Neon. No es fatal: si Neon no responde ahora pero la copia existe, el
-  // sitio sirve igual; y si no existe, la primera petición lo reintenta.
-  if (config.storageDriver === 'neon') {
-    fastify.addHook('onReady', async () => {
-      const repos = [
-        ['horario', scheduleRepository],
-        ['banner', bannerRepository]
-      ];
-
-      for (const [recurso, repo] of repos) {
-        try {
-          const origen = await repo.hydrate();
-          fastify.log.info({ recurso, origen }, 'Espejo en disco listo');
-        } catch (error) {
-          fastify.log.warn(
-            { err: error, recurso },
-            'No se pudo preparar el espejo en disco; se reintentará en la primera petición'
-          );
-        }
-      }
-    });
-  }
 
   // Panel de administración (archivos estáticos).
   await fastify.register(fastifyStatic, {
@@ -120,24 +91,9 @@ export async function buildServer() {
 
   fastify.get('/admin', async (request, reply) => reply.redirect('/admin/'));
 
-  // Sitio público: las 9 páginas con el horario y el banner dentro del HTML,
-  // más sus estáticos para que localhost:3000 se vea completo sin nginx. En
-  // la VM nginx sirve css/, js/, assets/ y fonts/ antes de llegar aquí, así
-  // que la segunda parte no estorba. Sin sitio (Vercel) no se registra nada
-  // y "/" cae al 404 general; validateConfig() ya avisó.
-  if (status.hasSite) {
-    await fastify.register(siteRoutes);
-    await fastify.register(fastifyStatic, {
-      root: config.paths.site,
-      prefix: '/',
-      index: false,
-      // Los decoradores de reply (sendFile...) ya los puso la instancia del panel.
-      decorateReply: false,
-      // Solo las carpetas de recursos: ni los .html crudos (los sirve
-      // site.routes.js con los datos), ni package.json ni nada más de la raíz.
-      allowedPath: (pathname) => isSiteAssetPath(pathname)
-    });
-  }
+  // El sitio público no pasa por aquí: es HTML estático (nginx en la VM,
+  // cualquier servidor estático en desarrollo) que pide el horario y el banner
+  // a /api/public/site-config.
 
   fastify.setNotFoundHandler(async (request, reply) => {
     return reply.code(404).send({

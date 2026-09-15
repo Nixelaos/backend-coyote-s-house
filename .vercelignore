@@ -1,7 +1,0 @@
-# El ensayo en Vercel solo necesita el servidor y el panel.
-migrations/
-data/
-plan.md
-despliegue.md
-fase-b.md
-neon.ts

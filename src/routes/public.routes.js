@@ -1,32 +1,29 @@
 /**
- * API pública de solo lectura.
+ * API pública de solo lectura: el horario y el banner que muestra el sitio.
  *
- * Desde la fase B el sitio ya no la consulta: el horario y el banner viajan
- * dentro del HTML (routes/site.routes.js). Se conserva porque devuelve
- * EXACTAMENTE el mismo JSON que va embebido en las páginas, más el estado
- * resuelto, así que es la forma más rápida de ver qué está publicando el
- * backend sin abrir el código fuente de una página.
+ * El sitio es HTML estático (nginx en la VM, cacheado por Cloudflare) y pide
+ * estos datos al cargar cada página. Por eso esta respuesta no se cachea: un
+ * cambio guardado desde el panel tiene que verse en la visita siguiente, no
+ * cuando venza una caché. En Cloudflare, /api/ va con "Bypass cache".
  *
- * Principio de diseño: esta ruta NUNCA falla. Si el archivo de datos está
- * corrupto o ilegible, se responde 200 con los valores por defecto y se
- * registra el problema. Aquí eso es aceptable porque Cloudflare no cachea
- * /api (regla 1 de despliegue.md 5.7); en las páginas, con caché delante, la
- * misma falla responde 503 para no envenenarla.
+ * Principio de diseño: nunca datos inventados.
+ *   - Sin horario legible (el archivo aún no existe o está dañado) se responde
+ *     503 y el sitio no muestra horario ni anuncio.
+ *   - Sin banner legible se publica "sin anuncio": no mostrar una franja no
+ *     afirma nada falso, y no hay motivo para esconder un horario real.
  */
 
 import cors from '@fastify/cors';
-import { scheduleRepository, normalizeSchedule } from '../repositories/schedule.repo.js';
+import { scheduleRepository } from '../repositories/schedule.repo.js';
 import { bannerRepository, normalizeBanner } from '../repositories/banner.repo.js';
 import { computeStatus } from '../lib/schedule-status.js';
-import { DEFAULT_SCHEDULE, DEFAULT_BANNER } from '../lib/defaults.js';
 import { buildPublicConfig } from '../lib/public-config.js';
 
-const CACHE_CONTROL = 'public, max-age=60, stale-while-revalidate=600';
-
 export default async function publicRoutes(fastify) {
-  // CORS abierto, pero acotado a este ámbito: el sitio vive en Netlify y este
-  // backend en otro dominio. Es seguro porque aquí solo se lee información que
-  // ya es pública y no se aceptan cookies.
+  // CORS abierto, pero acotado a este ámbito: en desarrollo el sitio se sirve
+  // desde otro puerto (por ejemplo localhost:5500) y pide los datos a :3000. En
+  // la VM nginx deja sitio y API bajo el mismo origen. Es seguro porque aquí
+  // solo se lee información que ya es pública y no se aceptan cookies.
   await fastify.register(cors, {
     origin: '*',
     methods: ['GET', 'HEAD', 'OPTIONS'],
@@ -36,23 +33,38 @@ export default async function publicRoutes(fastify) {
 
   fastify.get('/api/public/site-config', async (request, reply) => {
     let schedule;
-    let banner;
 
     try {
       schedule = await scheduleRepository.get();
     } catch (error) {
-      request.log.error({ err: error }, 'No se pudo leer el horario; se usan los valores por defecto');
-      schedule = normalizeSchedule(DEFAULT_SCHEDULE);
+      if (error.code === 'ENOENT') {
+        request.log.warn('Todavía no hay horario guardado: el sitio no muestra horario ni anuncio');
+      } else {
+        request.log.error({ err: error }, 'No se pudo leer el horario: el sitio no muestra horario ni anuncio');
+      }
+
+      // no-store: un 503 guardado en alguna caché seguiría tapando el horario
+      // cuando vuelva a estar disponible.
+      return reply
+        .code(503)
+        .header('Cache-Control', 'no-store')
+        .send({ error: 'sin_horario', message: 'El horario no está disponible en este momento.' });
     }
+
+    let banner;
 
     try {
       banner = await bannerRepository.get();
     } catch (error) {
-      request.log.error({ err: error }, 'No se pudo leer el banner; se omite');
-      banner = normalizeBanner(DEFAULT_BANNER);
+      if (error.code !== 'ENOENT') {
+        request.log.error({ err: error }, 'No se pudo leer el banner; se publica sin anuncio');
+      }
+      banner = normalizeBanner({});
     }
 
-    reply.header('Cache-Control', CACHE_CONTROL);
+    // no-cache: el navegador puede guardar la respuesta pero la revalida cada
+    // vez. Evitar peticiones repetidas es trabajo del sitio, no de esta cabecera.
+    reply.header('Cache-Control', 'no-cache');
 
     return {
       ...buildPublicConfig(schedule, banner),

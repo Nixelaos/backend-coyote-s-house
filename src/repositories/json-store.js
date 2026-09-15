@@ -1,14 +1,9 @@
 /**
  * Adaptador de almacenamiento sobre archivos JSON.
  *
- * Cumple dos papeles según STORAGE_DRIVER:
- *   json -> es EL almacenamiento (desarrollo local, sin Neon).
- *   neon -> es el ESPEJO en disco de Neon, lo único que lee el sitio público
- *           (ver mirror-store.js).
- *
- * Todo el resto del backend habla con la interfaz { get, save } y no sabe que
- * detrás hay archivos, así que ninguno de los dos papeles obliga a tocar rutas
- * ni UI.
+ * Es el único almacenamiento del backend: schedule.json y banner.json en
+ * DATA_DIR. El resto del código habla con la interfaz { get, save } y no sabe
+ * que detrás hay archivos.
  */
 
 import fs from 'node:fs/promises';
@@ -55,34 +50,28 @@ async function writeAtomic(filePath, data) {
 /**
  * Crea un repositorio respaldado por un archivo JSON.
  *
+ * No siembra valores por defecto: si el archivo no existe, get() lanza el
+ * ENOENT tal cual. Crear el archivo con un horario inventado lo publicaría
+ * como si alguien lo hubiera guardado; quien llama decide qué hacer con la
+ * ausencia (la API pública responde 503, el panel ofrece un punto de partida).
+ *
  * @param {object} options
  * @param {string} options.filePath  Ruta absoluta del archivo.
- * @param {object} options.defaults  Contenido inicial si el archivo no existe.
  * @param {(raw: object) => object} [options.normalize] Saneado al leer.
- * @param {boolean} [options.seedOnMissing=true]
- *   Con `true` (el comportamiento de siempre) un archivo ausente se crea con
- *   `defaults`. Con `false` la ausencia se propaga como error ENOENT: es lo
- *   que necesita mirror-store.js, donde el archivo es una COPIA de otro
- *   almacén y sembrarlo con valores por defecto ocultaría que la copia falta.
  */
-export function createJsonRepository({ filePath, defaults, normalize, seedOnMissing = true }) {
+export function createJsonRepository({ filePath, normalize }) {
   const apply = typeof normalize === 'function' ? normalize : (value) => value;
 
   return {
     async get() {
+      const raw = await fs.readFile(filePath, 'utf8');
+
       try {
-        const raw = await fs.readFile(filePath, 'utf8');
         return apply(JSON.parse(raw));
       } catch (error) {
-        if (error.code === 'ENOENT' && seedOnMissing) {
-          // Primer arranque: se siembra el archivo con los valores por defecto.
-          const seeded = apply(structuredClone(defaults));
-          await enqueueWrite(filePath, () => writeAtomic(filePath, seeded));
-          return seeded;
-        }
         if (error instanceof SyntaxError) {
-          // Un JSON corrupto no debe tumbar el sitio público: se avisa y se sigue
-          // con los valores por defecto, sin sobrescribir el archivo dañado.
+          // Un JSON dañado se informa con un código propio y sin sobrescribir
+          // el archivo: todavía puede repararse a mano.
           const wrapped = new Error(`El archivo ${path.basename(filePath)} tiene JSON inválido.`);
           wrapped.code = 'ECORRUPTJSON';
           wrapped.cause = error;

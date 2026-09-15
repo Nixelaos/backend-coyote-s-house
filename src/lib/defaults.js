@@ -1,9 +1,9 @@
 /**
- * Valores iniciales del sistema.
+ * Valores iniciales del panel.
  *
- * El horario por defecto replica EXACTAMENTE el que hoy está escrito a mano en
- * el sitio (Lun a Vie de 09:00 a 17:00), para que al encender el backend por
- * primera vez nada cambie de cara al visitante.
+ * Solo son el punto de partida del formulario cuando todavía no hay nada
+ * guardado (o el archivo está dañado). Nunca se publican: el sitio muestra
+ * únicamente lo que alguien guardó desde el panel.
  */
 
 export const DEFAULT_SCHEDULE = {

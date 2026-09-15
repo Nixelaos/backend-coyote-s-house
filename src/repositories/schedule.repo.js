@@ -1,36 +1,53 @@
 /**
  * Repositorio del horario de atención.
  *
- * INTERFAZ PÚBLICA — es el contrato que deberá cumplir el futuro adaptador de
- * Neon, sin cambios en quien lo consume:
+ * El almacenamiento es un archivo JSON (DATA_DIR/schedule.json) y es la única
+ * copia: no hay base de datos. Quien lo consume solo ve:
  *
- *   get()               -> Promise<Schedule>
+ *   get()               -> Promise<Schedule>   (lanza si falta, está dañado o no es válido)
  *   save(data, user)    -> Promise<Schedule>   (sella updatedAt / updatedBy)
  */
 
 import path from 'node:path';
 import config from '../config.js';
-import { DEFAULT_SCHEDULE } from '../lib/defaults.js';
+import { DAY_LONG } from '../lib/schedule-status.js';
+import { validateScheduleRules } from '../schemas/schedule.schema.js';
 import { createJsonRepository } from './json-store.js';
-import { createNeonScheduleStore } from './neon-store.js';
-import { createMirroredStore } from './mirror-store.js';
 
 const DAY_KEYS = ['0', '1', '2', '3', '4', '5', '6'];
 
+function invalidSchedule(detail) {
+  const error = new Error(`El horario guardado no es válido: ${detail}`);
+  error.code = 'EINVALIDDATA';
+  return error;
+}
+
 /**
- * Garantiza que el horario tenga los 7 días y una lista de excepciones válida,
- * aunque el archivo venga de una versión anterior o editado a mano.
+ * Da forma al horario: los 7 días y una lista de excepciones ordenada.
+ *
+ * Un día que falta NO se rellena con un horario por defecto, ni un día abierto
+ * sin horas recibe unas inventadas: eso publicaría algo que nadie guardó. El
+ * panel siempre envía los 7 días (lo exige el esquema), así que esto solo
+ * salta con un archivo editado a mano.
  */
 function normalizeSchedule(raw) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const days = {};
 
   for (const key of DAY_KEYS) {
-    const day = source.days?.[key] || DEFAULT_SCHEDULE.days[key];
+    const day = source.days?.[key];
+
+    if (!day || typeof day !== 'object') {
+      throw invalidSchedule(`falta el ${DAY_LONG[key]}.`);
+    }
+
+    const closed = Boolean(day.closed);
     days[key] = {
-      open: day.open || '09:00',
-      close: day.close || '17:00',
-      closed: Boolean(day.closed)
+      // En un día cerrado las horas no se muestran en ningún lado: solo
+      // rellenan el formulario del panel para cuando se vuelva a abrir.
+      open: closed ? day.open || '09:00' : day.open,
+      close: closed ? day.close || '17:00' : day.close,
+      closed
     };
   }
 
@@ -49,7 +66,7 @@ function normalizeSchedule(raw) {
     : [];
 
   return {
-    timezone: source.timezone || DEFAULT_SCHEDULE.timezone,
+    timezone: source.timezone || config.timezone,
     days,
     exceptions,
     updatedAt: source.updatedAt || null,
@@ -57,39 +74,22 @@ function normalizeSchedule(raw) {
   };
 }
 
-const RUTA_JSON = path.join(config.paths.data, 'schedule.json');
-
 /**
- * El driver se elige aquí y en ningún otro lado:
- *
- *   json -> el archivo ES el almacenamiento (desarrollo local, sin Neon).
- *   neon -> Neon es la fuente de verdad y el mismo archivo es un ESPEJO que se
- *           reescribe en cada guardado y es lo único que lee el sitio público.
- *           Así la lectura no depende de la red ni de que Neon esté despierta
- *           (ver mirror-store.js).
- *
- * Los tres stores exponen la misma pareja { get, save }, así que el resto del
- * archivo no cambia según cuál esté activo. Si alguna vez hubo que tocar rutas
- * o esquemas para migrar, el adaptador no estaba respetando el contrato.
+ * Lectura del archivo: además de dar forma, exige lo mismo que el panel al
+ * guardar. Un día abierto sin horas o que cierra antes de abrir no se publica:
+ * se lanza EINVALIDDATA y la API pública responde 503.
  */
-const store =
-  config.storageDriver === 'neon'
-    ? createMirroredStore({
-        name: 'horario',
-        primary: createNeonScheduleStore({ normalize: normalizeSchedule }),
-        mirror: createJsonRepository({
-          filePath: RUTA_JSON,
-          defaults: DEFAULT_SCHEDULE,
-          normalize: normalizeSchedule,
-          // Si la copia falta hay que ir a Neon, no inventar un horario.
-          seedOnMissing: false
-        })
-      })
-    : createJsonRepository({
-        filePath: RUTA_JSON,
-        defaults: DEFAULT_SCHEDULE,
-        normalize: normalizeSchedule
-      });
+function parseStoredSchedule(raw) {
+  const schedule = normalizeSchedule(raw);
+  const errors = validateScheduleRules(schedule);
+  if (errors.length > 0) throw invalidSchedule(errors.join(' '));
+  return schedule;
+}
+
+const store = createJsonRepository({
+  filePath: path.join(config.paths.data, 'schedule.json'),
+  normalize: parseStoredSchedule
+});
 
 export const scheduleRepository = {
   get() {
@@ -102,14 +102,6 @@ export const scheduleRepository = {
       updatedAt: new Date().toISOString(),
       updatedBy: user?.email || 'desconocido'
     });
-  },
-
-  /**
-   * Prepara el espejo antes de aceptar tráfico. Devuelve de dónde salió el
-   * dato ('espejo' o 'primario'); con el driver json no hay nada que preparar.
-   */
-  hydrate() {
-    return store.hydrate ? store.hydrate() : Promise.resolve('json');
   }
 };
 

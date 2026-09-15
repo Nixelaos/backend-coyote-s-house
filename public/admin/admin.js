@@ -535,7 +535,10 @@
   // ======================================================================
 
   function alCambiarHorario() {
-    var sucio = comparable(leerHorario()) !== comparable(guardado.schedule);
+    // Un horario que aún no está publicado se puede guardar tal cual: los
+    // valores iniciales pueden ser justo el horario correcto.
+    var sucio =
+      guardado.horarioSinPublicar || comparable(leerHorario()) !== comparable(guardado.schedule);
     $('schedule-save').disabled = !sucio;
     $('schedule-unsaved').classList.toggle('is-visible', sucio);
     actualizarVistaPrevia();
@@ -573,6 +576,7 @@
       var respuesta = await api('/api/admin/schedule', { method: 'PUT', body: leerHorario() });
 
       guardado.schedule = respuesta.schedule;
+      guardado.horarioSinPublicar = false;
       $('schedule-meta').textContent = formatearFecha(respuesta.schedule.updatedAt);
       $('schedule-unsaved').classList.remove('is-visible');
 
@@ -647,19 +651,26 @@
 
       guardado.schedule = horario.schedule;
       guardado.banner = banner.banner;
+      // Sin horario guardado (o con el archivo dañado) el servidor manda los
+      // valores iniciales: el sitio no muestra nada hasta que se guarden.
+      guardado.horarioSinPublicar = horario.published === false;
 
       pintarDias(horario.schedule);
       horario.schedule.exceptions.forEach(agregarExcepcion);
       actualizarVacioExcepciones();
       pintarBanner(banner.banner);
 
-      $('schedule-meta').textContent = formatearFecha(horario.schedule.updatedAt);
+      $('schedule-meta').textContent = guardado.horarioSinPublicar
+        ? 'Aún no se muestra en el sitio: revisa los días y guarda para publicarlo.'
+        : formatearFecha(horario.schedule.updatedAt);
       $('banner-meta').textContent = formatearFecha(banner.banner.updatedAt);
 
       $('loading').hidden = true;
       $('app').hidden = false;
 
-      actualizarVistaPrevia();
+      // Pinta la vista previa y, si el horario no está publicado, deja el
+      // botón de guardar activo.
+      alCambiarHorario();
 
       // El badge de estado cambia con el reloj aunque nadie toque nada.
       setInterval(actualizarVistaPrevia, 60000);

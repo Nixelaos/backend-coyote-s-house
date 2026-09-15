@@ -1,19 +1,18 @@
 /**
  * Repositorio del banner de anuncios.
  *
- * INTERFAZ PÚBLICA — idéntica a la del horario, para que el adaptador de Neon
- * sea un reemplazo directo:
+ * Igual que el horario: un archivo JSON (DATA_DIR/banner.json) como única
+ * copia, detrás de la misma interfaz:
  *
- *   get()             -> Promise<Banner>
+ *   get()             -> Promise<Banner>   (lanza si falta, está dañado o no es válido)
  *   save(data, user)  -> Promise<Banner>
  */
 
 import path from 'node:path';
 import config from '../config.js';
 import { DEFAULT_BANNER } from '../lib/defaults.js';
+import { validateBannerRules } from '../schemas/banner.schema.js';
 import { createJsonRepository } from './json-store.js';
-import { createNeonBannerStore } from './neon-store.js';
-import { createMirroredStore } from './mirror-store.js';
 
 const VALID_SPEEDS = new Set(['slow', 'normal', 'fast']);
 
@@ -33,14 +32,30 @@ function normalizeBanner(raw) {
 }
 
 /**
+ * Lectura del archivo: exige lo mismo que el panel al guardar. Un banner
+ * editado a mano con un enlace "javascript:" o fechas imposibles no se
+ * publica: se lanza EINVALIDDATA y la API pública sale sin anuncio.
+ */
+function parseStoredBanner(raw) {
+  const banner = normalizeBanner(raw);
+  const errors = validateBannerRules(banner);
+  if (errors.length > 0) {
+    const error = new Error(`El banner guardado no es válido: ${errors.join(' ')}`);
+    error.code = 'EINVALIDDATA';
+    throw error;
+  }
+  return banner;
+}
+
+/**
  * Decide si el banner debe mostrarse AHORA.
  *
- * Desde la fase B esta decisión la toma el navegador: el HTML viaja con
- * startsAt/endsAt y puede llevar una hora en caché, así que un "visible: sí"
- * calculado aquí quedaría viejo en cuanto empezara o terminara la vigencia
- * (ver lib/public-config.js). Esta función queda como implementación de
- * referencia: el paso 4 la porta a site-config.js y la prueba de paridad
- * compara las dos, igual que con el cálculo de abierto/cerrado.
+ * La decisión la toma el navegador: la API entrega el banner con
+ * startsAt/endsAt, y una pestaña abierta tiene que mostrarlo u ocultarlo
+ * cuando empieza o termina la vigencia sin volver a pedir datos. Esta función
+ * queda como implementación de referencia para portarla a site-config.js y
+ * comparar las dos con la prueba de paridad, igual que el cálculo de
+ * abierto/cerrado.
  * El mensaje vacío nunca se publica, aunque el interruptor esté activo.
  */
 export function resolveBannerVisibility(banner, reference = new Date()) {
@@ -61,27 +76,10 @@ export function resolveBannerVisibility(banner, reference = new Date()) {
   return true;
 }
 
-const RUTA_JSON = path.join(config.paths.data, 'banner.json');
-
-// Mismo criterio que en schedule.repo.js: el driver se elige una sola vez, y
-// con neon el archivo pasa a ser el espejo que lee el sitio.
-const store =
-  config.storageDriver === 'neon'
-    ? createMirroredStore({
-        name: 'banner',
-        primary: createNeonBannerStore({ normalize: normalizeBanner }),
-        mirror: createJsonRepository({
-          filePath: RUTA_JSON,
-          defaults: DEFAULT_BANNER,
-          normalize: normalizeBanner,
-          seedOnMissing: false
-        })
-      })
-    : createJsonRepository({
-        filePath: RUTA_JSON,
-        defaults: DEFAULT_BANNER,
-        normalize: normalizeBanner
-      });
+const store = createJsonRepository({
+  filePath: path.join(config.paths.data, 'banner.json'),
+  normalize: parseStoredBanner
+});
 
 export const bannerRepository = {
   get() {
@@ -94,11 +92,6 @@ export const bannerRepository = {
       updatedAt: new Date().toISOString(),
       updatedBy: user?.email || 'desconocido'
     });
-  },
-
-  /** Ver scheduleRepository.hydrate(). */
-  hydrate() {
-    return store.hydrate ? store.hydrate() : Promise.resolve('json');
   }
 };
 

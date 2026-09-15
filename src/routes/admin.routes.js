@@ -10,6 +10,7 @@
 import { scheduleRepository, normalizeSchedule } from '../repositories/schedule.repo.js';
 import { bannerRepository, normalizeBanner } from '../repositories/banner.repo.js';
 import { computeStatus } from '../lib/schedule-status.js';
+import { DEFAULT_SCHEDULE, DEFAULT_BANNER } from '../lib/defaults.js';
 import { scheduleBodySchema, validateScheduleRules } from '../schemas/schedule.schema.js';
 import { bannerBodySchema, validateBannerRules } from '../schemas/banner.schema.js';
 
@@ -23,6 +24,26 @@ function sendValidationError(reply, errors) {
     message: errors[0],
     details: errors
   });
+}
+
+/**
+ * Lee un recurso para el panel. Si el archivo todavía no existe o está dañado,
+ * el panel recibe los valores iniciales en vez de un error: sin eso nadie
+ * podría guardar el primer horario ni reemplazar un archivo roto.
+ * `published: false` le avisa que el sitio no está mostrando esos datos; no se
+ * publican hasta que alguien los guarde.
+ */
+async function readForPanel(repository, initial, request, resource) {
+  try {
+    return { data: await repository.get(), published: true };
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      request.log.info({ resource }, 'Sin datos guardados: el panel parte de los valores iniciales');
+    } else {
+      request.log.error({ err: error, resource }, 'Datos ilegibles: el panel parte de los valores iniciales');
+    }
+    return { data: initial, published: false };
+  }
 }
 
 export default async function adminRoutes(fastify) {
@@ -41,9 +62,14 @@ export default async function adminRoutes(fastify) {
 
   // --- Horario ---------------------------------------------------------
 
-  fastify.get('/api/admin/schedule', async () => {
-    const schedule = await scheduleRepository.get();
-    return { schedule, status: computeStatus(schedule) };
+  fastify.get('/api/admin/schedule', async (request) => {
+    const { data: schedule, published } = await readForPanel(
+      scheduleRepository,
+      normalizeSchedule(DEFAULT_SCHEDULE),
+      request,
+      'horario'
+    );
+    return { schedule, status: computeStatus(schedule), published };
   });
 
   fastify.put(
@@ -71,9 +97,14 @@ export default async function adminRoutes(fastify) {
 
   // --- Banner ----------------------------------------------------------
 
-  fastify.get('/api/admin/banner', async () => {
-    const banner = await bannerRepository.get();
-    return { banner };
+  fastify.get('/api/admin/banner', async (request) => {
+    const { data: banner, published } = await readForPanel(
+      bannerRepository,
+      normalizeBanner(DEFAULT_BANNER),
+      request,
+      'banner'
+    );
+    return { banner, published };
   });
 
   fastify.put(

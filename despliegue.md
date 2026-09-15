@@ -1,8 +1,20 @@
 # Plan de despliegue — Coyote's House en Oracle Linux ARM
 
-Continuación de [`plan.md`](plan.md), que dejó la migración a Neon lista y probada sobre la
-rama `dev`. Este documento cubre lo que falta para que don Alberto administre el horario
-desde Internet.
+> **⚠️ DESACTUALIZADO (2026-09-15): reescribir antes de desplegar.** Este plan se escribió
+> para Neon, el ensayo en Vercel y el HTML renderizado por Fastify (fase B), y las tres cosas
+> se quitaron del proyecto. Lo vigente:
+>
+> - El horario y el banner viven en `schedule.json` y `banner.json` dentro de `DATA_DIR`, que
+>   en la VM es `/var/lib/coyote` (fuera del repo). No hay base de datos.
+> - El sitio sigue siendo HTML estático servido por nginx y cacheado por Cloudflare; cada
+>   página pide los datos a `/api/public/site-config`.
+> - nginx reenvía a Fastify solo `/api/`, `/admin`, `/auth/` y `/health`, y Cloudflare tiene
+>   una regla "Bypass cache" para esas mismas rutas.
+>
+> No aplican: la sección 3 (Vercel), todo lo de Neon y la fase B (sección 9, `proxy_cache`,
+> purga de Cloudflare). Lo que queda abajo sobre esos temas es solo historia.
+
+Este documento cubre lo que falta para que don Alberto administre el horario desde Internet.
 
 Fecha: 2026-09-09. Revisado contra el sitio en vivo, Neon y los repos: 2026-09-11.
 

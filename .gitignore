@@ -8,7 +8,8 @@ node_modules/
 .env.production
 .env.development
 
-# Datos persistidos en desarrollo local
+# Horario y banner: son la única copia de los datos y no van a git.
+# En la VM viven fuera del repo, en DATA_DIR.
 data/*.json
 !data/.gitkeep
 
@@ -24,6 +25,3 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
-
-# Workspace de Neon (orgId/projectId del proyecto enlazado)
-.neon

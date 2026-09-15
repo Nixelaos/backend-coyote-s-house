@@ -11,7 +11,6 @@ import fp from 'fastify-plugin';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import config from '../config.js';
-import { isPublicSitePath } from '../lib/site-pages.js';
 
 async function securityPlugin(fastify) {
   await fastify.register(helmet, {
@@ -44,15 +43,9 @@ async function securityPlugin(fastify) {
     global: true,
     max: 300,
     timeWindow: '1 minute',
-    // El endpoint público y las páginas del sitio son cacheables y los pide
-    // cualquier visitante: no tiene sentido castigarlos con el mismo cupo que
-    // un intento de login. Además, una purga de Cloudflare provoca una ráfaga
-    // de todas las páginas a la vez. Los estáticos entran por lo mismo: en
-    // desarrollo un solo refresco carga unos 25 recursos.
-    allowList: (request) => {
-      const pathname = request.url.split('?', 1)[0];
-      return pathname.startsWith('/api/public/') || isPublicSitePath(pathname);
-    },
+    // El endpoint público lo pide cada página que abre cualquier visitante: no
+    // tiene sentido castigarlo con el mismo cupo que un intento de login.
+    allowList: (request) => request.url.startsWith('/api/public/'),
     errorResponseBuilder: () => ({
       error: 'demasiadas_peticiones',
       message: 'Demasiadas peticiones seguidas. Espera un momento e inténtalo de nuevo.'

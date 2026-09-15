@@ -1,21 +1,17 @@
 /**
- * Arma el JSON público con el horario y el banner: es lo que va embebido en
- * el HTML de cada página (site-render.js) y lo que devuelve
- * /api/public/site-config. Una sola función para que nunca diverjan.
+ * Arma el JSON público con el horario y el banner que devuelve
+ * /api/public/site-config y que el sitio lee al cargar cada página.
  *
  * Qué se publica y qué no:
  *
  *   - El horario completo (días y excepciones), no el estado abierto/cerrado.
- *     El estado es función de la hora actual y el HTML puede llevar una hora
- *     en caché: lo calcula el navegador con su reloj, cada minuto.
+ *     El estado es función de la hora actual: lo calcula el navegador con su
+ *     reloj, cada minuto, sin volver a pedir datos.
  *
  *   - El banner tal cual está guardado, con su ventana de vigencia
- *     (startsAt/endsAt). Por el mismo motivo, la ventana NO se evalúa aquí:
- *     la misma copia cacheada tiene que ser correcta antes, durante y después
- *     de la vigencia, y eso solo se logra si quien decide es el navegador en
- *     el momento de mostrarla. Es la decisión del 11/09 (fase B, paso 2); la
- *     evaluación en el cliente llega con el paso 4 y se cubre con la prueba
- *     de paridad, igual que el cálculo del estado.
+ *     (startsAt/endsAt). Por el mismo motivo la ventana NO se evalúa aquí: la
+ *     decide el navegador en el momento de mostrarlo (ver
+ *     resolveBannerVisibility() en banner.repo.js).
  *
  *   - updatedBy queda fuera: es un correo y esto es público.
  */

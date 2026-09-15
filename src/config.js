@@ -6,19 +6,12 @@
 
 import { config as loadDotenv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
-import fs from 'node:fs';
 import path from 'node:path';
 
 loadDotenv();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
-
-// Carpeta con el sitio público (los .html, css/, js/, assets/, fonts/). En
-// desarrollo es el repo hermano; en la VM, el docroot que sirve nginx. Se
-// recuerda si vino de la variable para que validateConfig() distinga un
-// SITE_ROOT mal escrito (error) de un entorno sin sitio, como Vercel (aviso).
-const siteRootFromEnv = process.env.SITE_ROOT ? path.resolve(process.env.SITE_ROOT) : '';
 
 /** Convierte "a@x.com, b@y.com" en ['a@x.com', 'b@y.com'] sin vacíos ni espacios. */
 function parseList(value) {
@@ -57,17 +50,13 @@ const config = {
 
   allowedOrigins: parseList(process.env.ALLOWED_ORIGINS),
 
-  storageDriver: process.env.STORAGE_DRIVER || 'json',
-  databaseUrl: process.env.DATABASE_URL || '',
-
   paths: {
     root: ROOT_DIR,
-    // Almacenamiento con el driver json; espejo de Neon con el driver neon.
-    // Se puede mover con DATA_DIR donde el disco del proyecto sea de solo
-    // lectura (en Vercel, /tmp).
+    // schedule.json y banner.json: el único almacenamiento, no hay base de
+    // datos. En la VM va fuera del repo (DATA_DIR=/var/lib/coyote) para que ni
+    // un despliegue ni un `git clean` se lleven los datos.
     data: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT_DIR, 'data'),
-    adminPublic: path.join(ROOT_DIR, 'public', 'admin'),
-    site: siteRootFromEnv || path.resolve(ROOT_DIR, '..', 'coyote-s-house')
+    adminPublic: path.join(ROOT_DIR, 'public', 'admin')
   },
 
   timezone: 'America/Santiago'
@@ -110,27 +99,7 @@ export function validateConfig() {
     errors.push('PUBLIC_BASE_URL debe usar https en producción (la cookie de sesión es Secure).');
   }
 
-  if (config.storageDriver === 'neon' && !config.databaseUrl) {
-    errors.push('STORAGE_DRIVER=neon requiere DATABASE_URL.');
-  }
-
-  // Sin sitio no hay páginas que servir, pero el panel y la API siguen
-  // funcionando. Solo es un error si alguien apuntó SITE_ROOT a una carpeta
-  // que no existe: eso es un typo en la VM, no un entorno sin sitio.
-  const hasSite = fs.existsSync(config.paths.site);
-
-  if (!hasSite) {
-    if (siteRootFromEnv) {
-      errors.push(`SITE_ROOT apunta a ${config.paths.site}, que no existe.`);
-    } else {
-      warnings.push(
-        `No se encontró el sitio público en ${config.paths.site}; las páginas del sitio no se servirán. ` +
-          'Define SITE_ROOT si está en otra carpeta.'
-      );
-    }
-  }
-
-  return { errors, warnings, hasGoogleCredentials, hasSite };
+  return { errors, warnings, hasGoogleCredentials };
 }
 
 export default config;
