@@ -11,7 +11,7 @@
  *   - El banner tal cual está guardado, con su ventana de vigencia
  *     (startsAt/endsAt). Por el mismo motivo la ventana NO se evalúa aquí: la
  *     decide el navegador en el momento de mostrarlo (ver
- *     resolveBannerVisibility() en banner.repo.js).
+ *     lib/banner-visibility.js).
  *
  *   - updatedBy queda fuera: es un correo y esto es público.
  */

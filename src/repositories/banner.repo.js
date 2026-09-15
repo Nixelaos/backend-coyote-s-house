@@ -6,6 +6,8 @@
  *
  *   get()             -> Promise<Banner>   (lanza si falta, está dañado o no es válido)
  *   save(data, user)  -> Promise<Banner>
+ *
+ * La vigencia (startsAt/endsAt) no se evalúa aquí: ver lib/banner-visibility.js.
  */
 
 import path from 'node:path';
@@ -45,35 +47,6 @@ function parseStoredBanner(raw) {
     throw error;
   }
   return banner;
-}
-
-/**
- * Decide si el banner debe mostrarse AHORA.
- *
- * La decisión la toma el navegador: la API entrega el banner con
- * startsAt/endsAt, y una pestaña abierta tiene que mostrarlo u ocultarlo
- * cuando empieza o termina la vigencia sin volver a pedir datos. Esta función
- * queda como implementación de referencia para portarla a site-config.js y
- * comparar las dos con la prueba de paridad, igual que el cálculo de
- * abierto/cerrado.
- * El mensaje vacío nunca se publica, aunque el interruptor esté activo.
- */
-export function resolveBannerVisibility(banner, reference = new Date()) {
-  if (!banner.enabled || !banner.message) return false;
-
-  const now = reference.getTime();
-
-  if (banner.startsAt) {
-    const starts = Date.parse(banner.startsAt);
-    if (Number.isFinite(starts) && now < starts) return false;
-  }
-
-  if (banner.endsAt) {
-    const ends = Date.parse(banner.endsAt);
-    if (Number.isFinite(ends) && now > ends) return false;
-  }
-
-  return true;
 }
 
 const store = createJsonRepository({

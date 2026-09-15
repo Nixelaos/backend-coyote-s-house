@@ -191,15 +191,17 @@ Dos suites, sin dependencias de desarrollo:
   acceso, validaciones, guardado y publicación, archivos dañados y que el backend no sirva el
   sitio, usando `fastify.inject` (sin abrir puertos). Trabaja en una carpeta de datos temporal
   y nunca toca `data/`.
-- **`paridad.test.mjs`** — compara `src/lib/schedule-status.js` (servidor) contra
-  `coyote-s-house/js/lib/site-config.js` (navegador) barriendo una semana completa en pasos
-  de 90 minutos sobre 10 horarios distintos: **1.280 comparaciones**. Se omite sola si el
-  sitio público no está en `../coyote-s-house`.
+- **`paridad.test.mjs`** — compara el backend con `coyote-s-house/js/lib/site-config.js`
+  (navegador) barriendo una semana completa en pasos de 90 minutos: el estado
+  abierto/cerrado y el resumen contra `src/lib/schedule-status.js` en 10 horarios (**1.280
+  comparaciones**), y la vigencia del banner contra `src/lib/banner-visibility.js` en 8 casos
+  (**1.024 comparaciones**). También comprueba que sin datos el navegador no muestre nada. Se
+  omite sola si el sitio público no está en `../coyote-s-house`.
 
   Esa segunda suite existe por una razón concreta: el sitio público no puede importar código
-  de este backend, así que la lógica de "abierto/cerrado" está escrita dos veces. Si las dos
-  versiones divergen, el sitio afirma una cosa y la API otra, y nadie se entera hasta que un
-  cliente llega al taller cerrado. Si tocas una, corre esta prueba.
+  de este backend, así que esa lógica está escrita dos veces. Si las dos versiones divergen,
+  el sitio afirma una cosa y la API otra, y nadie se entera hasta que un cliente llega al
+  taller cerrado. Si tocas una, corre esta prueba.
 
 ---
 
@@ -216,9 +218,10 @@ src/
 ├── repositories/          schedule.repo.js y banner.repo.js sobre json-store.js
 ├── schemas/               JSON Schema + reglas de negocio en español
 └── lib/
-    ├── defaults.js        Valores iniciales del formulario del panel (nunca se publican)
-    ├── schedule-status.js Cálculo de abierto/cerrado en America/Santiago
-    └── public-config.js   El JSON que publica /api/public/site-config
+    ├── defaults.js          Valores iniciales del formulario del panel (nunca se publican)
+    ├── schedule-status.js   Cálculo de abierto/cerrado en America/Santiago
+    ├── banner-visibility.js Vigencia del banner (referencia de la que repite el navegador)
+    └── public-config.js     El JSON que publica /api/public/site-config
 public/admin/              Panel: HTML, CSS y JS sin build ni dependencias
 data/                      schedule.json y banner.json (fuera de git)
 ```
@@ -247,8 +250,7 @@ Solo se guarda el último cambio (`updatedAt` y `updatedBy`), no un historial.
 ## Desplegar
 
 El backend corre en la VM de Oracle (Linux ARM) como servicio de systemd, detrás de nginx y
-Cloudflare. El procedimiento está en [`despliegue.md`](despliegue.md), pendiente de
-reescribir tras quitar Neon y Vercel. Lo esencial:
+Cloudflare. El procedimiento completo está en [`despliegue.md`](despliegue.md). Lo esencial:
 
 1. `NODE_ENV=production`, `PUBLIC_BASE_URL=https://coyoteshouse.cl` y
    `DATA_DIR=/var/lib/coyote` en el entorno del servicio, con permiso de escritura sobre esa

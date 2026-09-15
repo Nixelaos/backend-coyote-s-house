@@ -23,6 +23,11 @@
   --color-orange-bright: #FB923C;
   --color-orange-ink: #1A1207;
 
+  /* Los mismos del banner del sitio público (css/variables.css). */
+  --color-banner: #22C55E;
+  --color-banner-bright: #4ADE80;
+  --color-banner-ink: #011A0B;
+
   --color-green-bright: #4ade80;
   --color-red-soft: #f87171;
 
@@ -240,11 +245,11 @@ h3 {
   overflow: hidden;
   background: linear-gradient(
     90deg,
-    var(--color-orange) 0%,
-    var(--color-orange-bright) 50%,
-    var(--color-orange) 100%
+    var(--color-banner) 0%,
+    var(--color-banner-bright) 50%,
+    var(--color-banner) 100%
   );
-  color: var(--color-orange-ink);
+  color: var(--color-banner-ink);
   border-bottom: 2px solid rgba(0, 0, 0, 0.35);
   font-weight: 700;
   font-size: 0.85rem;
